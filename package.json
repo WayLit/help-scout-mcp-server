@@ -1,10 +1,37 @@
 {
   "name": "help-scout-mcp-server",
   "version": "1.7.0",
-  "mcpName": "io.github.drewburchfield/help-scout-mcp",
+  "packageManager": "pnpm@10.33.0",
   "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
-  "main": "dist/index.js",
-  "type": "module",
+  "keywords": [
+    "claude-code-plugin",
+    "claude-cowork",
+    "claude-desktop",
+    "customer-support",
+    "help scout",
+    "help-scout",
+    "help-scout-api",
+    "helpscout",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "modelcontextprotocol",
+    "nodejs",
+    "typescript"
+  ],
+  "homepage": "https://github.com/drewburchfield/help-scout-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/drewburchfield/help-scout-mcp-server/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Drew Burchfield",
+    "url": "https://github.com/drewburchfield"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drewburchfield/help-scout-mcp-server.git"
+  },
   "bin": {
     "help-scout-mcp-server": "dist/index.js"
   },
@@ -15,11 +42,15 @@
     "LICENSE",
     "claude-desktop-config.json"
   ],
+  "type": "module",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "lint": "eslint src",
+    "lint": "oxlint src",
+    "fmt": "oxfmt --write src",
+    "fmt:check": "oxfmt --check src",
     "type-check": "tsc --noEmit",
     "security": "semgrep --config .semgrep.yml .",
     "security:ci": "semgrep ci",
@@ -39,35 +70,6 @@
     "build:all": "npm run build && npm run mcpb:build",
     "sync:plugin": "rm -rf plugins/helpscout-navigator && git clone --depth 1 https://github.com/drewburchfield/helpscout-navigator.git plugins/helpscout-navigator && rm -rf plugins/helpscout-navigator/.git"
   },
-  "keywords": [
-    "mcp",
-    "model-context-protocol",
-    "modelcontextprotocol",
-    "mcp-server",
-    "help-scout",
-    "help-scout-api",
-    "helpscout",
-    "help scout",
-    "customer-support",
-    "claude-cowork",
-    "claude-code-plugin",
-    "claude-desktop",
-    "typescript",
-    "nodejs"
-  ],
-  "author": {
-    "name": "Drew Burchfield",
-    "url": "https://github.com/drewburchfield"
-  },
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/drewburchfield/help-scout-mcp-server.git"
-  },
-  "homepage": "https://github.com/drewburchfield/help-scout-mcp-server#readme",
-  "bugs": {
-    "url": "https://github.com/drewburchfield/help-scout-mcp-server/issues"
-  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
     "axios": "^1.14.0",
@@ -77,27 +79,27 @@
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.0.1",
-    "@eslint/js": "^10.0.1",
     "@types/jest": "^30.0.0",
-"@types/node": "^25.5.2",
-    "eslint": "^10.2.0",
-    "globals": "^17.4.0",
+    "@types/node": "^25.5.2",
     "jest": "^30.3.0",
     "nock": "^14.0.11",
+    "oxfmt": "^0.43.0",
+    "oxlint": "^1.58.0",
     "rimraf": "^5.0.10",
     "ts-jest": "^29.4.9",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.58.0"
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=20.19.0"
   },
-  "overrides": {
-    "cross-spawn": "^7.0.6",
-    "brace-expansion": "^2.0.2",
-    "minimatch": "^9.0.7",
-    "hono": "4.12.4",
-    "@hono/node-server": "1.19.10"
+  "mcpName": "io.github.drewburchfield/help-scout-mcp",
+  "pnpm": {
+    "overrides": {
+      "@hono/node-server@<1.19.13": ">=1.19.13",
+      "tmp@<=0.2.3": ">=0.2.4",
+      "hono@<4.12.12": ">=4.12.12"
+    }
   }
+
 }
