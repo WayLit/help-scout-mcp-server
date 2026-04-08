@@ -1,7 +1,7 @@
 {
   "name": "helpscout-mcp",
   "owner": {
-    "name": "Drew Burchfield"
+    "name": "WayLit"
   },
   "metadata": {
     "description": "HelpScout MCP server with navigator plugin for Claude Code and CoWork",
@@ -15,7 +15,7 @@
       "version": "1.1.1",
       "author": {"name": "Drew Burchfield"},
       "category": "productivity",
-      "homepage": "https://github.com/drewburchfield/helpscout-navigator"
+      "homepage": "https://github.com/WayLit/help-scout-mcp-server"
     }
   ]
 }
