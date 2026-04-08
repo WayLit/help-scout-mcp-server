@@ -471,7 +471,7 @@ describe('PromptHandler', () => {
 
         try {
           await promptHandler.getPrompt(request);
-        } catch (error) {
+        } catch {
           // Expected error
         }
 

@@ -8,10 +8,11 @@ describe('ResourceHandler', () => {
   const baseURL = 'https://api.helpscout.net/v2';
 
   beforeEach(() => {
-    // Mock environment for tests
-    process.env.HELPSCOUT_CLIENT_ID = 'test-client-id';
-    process.env.HELPSCOUT_CLIENT_SECRET = 'test-client-secret';
-    process.env.HELPSCOUT_BASE_URL = `${baseURL}/`;
+    // Set config directly (module-level config is evaluated at import time,
+    // so process.env changes in beforeEach are too late)
+    config.helpscout.clientId = 'test-client-id';
+    config.helpscout.clientSecret = 'test-client-secret';
+    config.helpscout.baseUrl = `${baseURL}/`;
 
     nock.cleanAll();
 

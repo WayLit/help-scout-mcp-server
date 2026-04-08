@@ -288,7 +288,7 @@ export class HelpScoutClient {
       logger.info('Authenticated with Help Scout API using OAuth2 Client Credentials');
     } catch (error) {
       logger.error('OAuth2 authentication failed', { error: error instanceof Error ? error.message : String(error) });
-      throw new Error('Failed to authenticate with Help Scout API. Check your OAuth2 credentials.');
+      throw new Error('Failed to authenticate with Help Scout API. Check your OAuth2 credentials.', { cause: error });
     }
   }
 

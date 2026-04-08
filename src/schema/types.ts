@@ -283,7 +283,7 @@ export const ErrorSchema = z.object({
   code: z.enum(['INVALID_INPUT', 'NOT_FOUND', 'UNAUTHORIZED', 'RATE_LIMIT', 'UPSTREAM_ERROR']),
   message: z.string(),
   retryAfter: z.number().optional(),
-  details: z.record(z.unknown()).default({}),
+  details: z.record(z.string(), z.unknown()).default({}),
 });
 
 // Type exports

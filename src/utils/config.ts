@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 
 // Only load .env in non-test environments
 if (process.env.NODE_ENV !== 'test') {
-  dotenv.config();
+  dotenv.config({ quiet: true });
 }
 
 export interface Config {

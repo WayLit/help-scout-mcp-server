@@ -1,0 +1,4 @@
+minimumReleaseAge: 4320
+minimumReleaseAgeExclude:
+  - preact@10.28.2
+  - lodash@4.18.1

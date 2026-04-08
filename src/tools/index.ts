@@ -763,7 +763,7 @@ export class ToolHandler {
 
     let conversations: Conversation[] = [];
     let searchedStatuses: string[];
-    let pagination: unknown = null;
+    let pagination: unknown;
 
     if (input.status) {
       // Explicit status: single API call
