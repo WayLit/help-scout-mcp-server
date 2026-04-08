@@ -55,7 +55,7 @@ Add to your MCP client's config file (e.g., `claude_desktop_config.json`, `.curs
   "mcpServers": {
     "helpscout": {
       "command": "npx",
-      "args": ["help-scout-mcp-server"],
+      "args": ["@waylit/helpscout-mcp"],
       "env": {
         "HELPSCOUT_APP_ID": "your-app-id",
         "HELPSCOUT_APP_SECRET": "your-app-secret"
@@ -81,9 +81,9 @@ docker run -e HELPSCOUT_APP_ID="your-app-id" \
 
 > Help Scout uses OAuth2 Client Credentials flow exclusively. Personal Access Tokens are not supported.
 
-| Help Scout UI | Environment Variable |
-|---------------|---------------------|
-| **App ID** | `HELPSCOUT_APP_ID` |
+| Help Scout UI  | Environment Variable   |
+| -------------- | ---------------------- |
+| **App ID**     | `HELPSCOUT_APP_ID`     |
 | **App Secret** | `HELPSCOUT_APP_SECRET` |
 
 Alternative names `HELPSCOUT_CLIENT_ID` / `HELPSCOUT_CLIENT_SECRET` and legacy `HELPSCOUT_API_KEY` are also supported.
@@ -92,48 +92,48 @@ Alternative names `HELPSCOUT_CLIENT_ID` / `HELPSCOUT_CLIENT_SECRET` and legacy `
 
 ### Which tool should I use?
 
-| Task | Tool | Example |
-|------|------|---------|
-| List recent tickets | `searchConversations` | "Show me active tickets from this week" |
-| Find by keyword | `comprehensiveConversationSearch` | "Find conversations about billing errors" |
-| Look up a ticket number | `structuredConversationFilter` | "Show me ticket #42839" |
-| Complex filters | `advancedConversationSearch` | "All @acme.com conversations tagged urgent" |
-| Browse customers | `listCustomers` | "Show customers named Jane" |
-| Find a customer by email | `searchCustomersByEmail` | "Find customer jane@acme.com" |
-| Inspect a customer profile | `getCustomer` | "Open customer 12345" |
-| Pull customer contact channels | `getCustomerContacts` | "Show contact details for customer 12345" |
-| Browse organizations | `listOrganizations` | "Show the busiest organizations" |
-| Inspect an organization | `getOrganization` | "Open organization 456" |
-| List customers in an organization | `getOrganizationMembers` | "Who belongs to organization 456?" |
-| List organization conversations | `getOrganizationConversations` | "Show support history for organization 456" |
-| Quick conversation overview | `getConversationSummary` | "Summarize this conversation" |
-| Full message history | `getThreads` | "Show me the complete thread" |
-| Current server time | `getServerTime` | Used for time-relative searches |
+| Task                              | Tool                              | Example                                     |
+| --------------------------------- | --------------------------------- | ------------------------------------------- |
+| List recent tickets               | `searchConversations`             | "Show me active tickets from this week"     |
+| Find by keyword                   | `comprehensiveConversationSearch` | "Find conversations about billing errors"   |
+| Look up a ticket number           | `structuredConversationFilter`    | "Show me ticket #42839"                     |
+| Complex filters                   | `advancedConversationSearch`      | "All @acme.com conversations tagged urgent" |
+| Browse customers                  | `listCustomers`                   | "Show customers named Jane"                 |
+| Find a customer by email          | `searchCustomersByEmail`          | "Find customer jane@acme.com"               |
+| Inspect a customer profile        | `getCustomer`                     | "Open customer 12345"                       |
+| Pull customer contact channels    | `getCustomerContacts`             | "Show contact details for customer 12345"   |
+| Browse organizations              | `listOrganizations`               | "Show the busiest organizations"            |
+| Inspect an organization           | `getOrganization`                 | "Open organization 456"                     |
+| List customers in an organization | `getOrganizationMembers`          | "Who belongs to organization 456?"          |
+| List organization conversations   | `getOrganizationConversations`    | "Show support history for organization 456" |
+| Quick conversation overview       | `getConversationSummary`          | "Summarize this conversation"               |
+| Full message history              | `getThreads`                      | "Show me the complete thread"               |
+| Current server time               | `getServerTime`                   | Used for time-relative searches             |
 
 Inboxes are auto-discovered when the server connects. AI agents get inbox IDs in their instructions automatically, so no lookup step is needed.
 
 ## Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HELPSCOUT_APP_ID` | App ID from Help Scout My Apps | Required |
-| `HELPSCOUT_APP_SECRET` | App Secret from Help Scout My Apps | Required |
-| `HELPSCOUT_DEFAULT_INBOX_ID` | Scope searches to a specific inbox | None (all inboxes) |
-| `HELPSCOUT_BASE_URL` | Help Scout API endpoint | `https://api.helpscout.net/v2/` |
-| `REDACT_MESSAGE_CONTENT` | Hide message bodies in responses | `false` |
-| `CACHE_TTL_SECONDS` | Cache duration for API responses | `300` |
-| `LOG_LEVEL` | Logging verbosity (`error`, `warn`, `info`, `debug`) | `info` |
+| Variable                     | Description                                          | Default                         |
+| ---------------------------- | ---------------------------------------------------- | ------------------------------- |
+| `HELPSCOUT_APP_ID`           | App ID from Help Scout My Apps                       | Required                        |
+| `HELPSCOUT_APP_SECRET`       | App Secret from Help Scout My Apps                   | Required                        |
+| `HELPSCOUT_DEFAULT_INBOX_ID` | Scope searches to a specific inbox                   | None (all inboxes)              |
+| `HELPSCOUT_BASE_URL`         | Help Scout API endpoint                              | `https://api.helpscout.net/v2/` |
+| `REDACT_MESSAGE_CONTENT`     | Hide message bodies in responses                     | `false`                         |
+| `CACHE_TTL_SECONDS`          | Cache duration for API responses                     | `300`                           |
+| `LOG_LEVEL`                  | Logging verbosity (`error`, `warn`, `info`, `debug`) | `info`                          |
 
 ## Compatibility
 
 Works with any [MCP-compatible](https://modelcontextprotocol.io) client:
 
-| Category | Clients |
-|----------|---------|
+| Category          | Clients                                                 |
+| ----------------- | ------------------------------------------------------- |
 | **AI Assistants** | Claude Desktop, Goose, and other MCP-enabled assistants |
-| **Code Editors** | Cursor, VS Code, Windsurf, Continue.dev |
-| **Command Line** | Claude Code, Codex, Gemini CLI, OpenCode |
-| **Custom** | Any application implementing the MCP standard |
+| **Code Editors**  | Cursor, VS Code, Windsurf, Continue.dev                 |
+| **Command Line**  | Claude Code, Codex, Gemini CLI, OpenCode                |
+| **Custom**        | Any application implementing the MCP standard           |
 
 ## Security and Privacy
 
@@ -155,6 +155,7 @@ curl -X POST https://api.helpscout.net/v2/oauth2/token \
 ```
 
 **Empty search results?** Common causes:
+
 - Using the wrong search tool (use `searchConversations` for listing, `comprehensiveConversationSearch` for keyword search)
 - Inbox ID mismatch. Check the IDs from server instructions, not guessed values.
 - Search terms too narrow. Try broader terms or a longer time range.

@@ -8,7 +8,7 @@ This guide walks you through installing the Help Scout plugin in Claude Cowork a
 2. Click **Customize** in the left sidebar
 3. Click **Browse plugins** and go to the **Personal** tab
 4. Click the **+** button and choose **Add marketplace from GitHub**
-5. Enter: `drewburchfield/help-scout-mcp-server`
+5. Enter: `WayLit/help-scout-mcp-server`
 6. Find **helpscout-navigator** in the list and click **Install**
 7. When prompted about local MCP servers, click **Continue**
 
@@ -38,11 +38,12 @@ The plugin needs your App ID and App Secret to connect to Help Scout. There are 
 5. Replace the placeholder values with your actual credentials:
 
 **Before:**
+
 ```json
 {
   "helpscout": {
     "command": "npx",
-    "args": ["-y", "help-scout-mcp-server"],
+    "args": ["-y", "@waylit/helpscout-mcp"],
     "env": {
       "HELPSCOUT_APP_ID": "${HELPSCOUT_APP_ID}",
       "HELPSCOUT_APP_SECRET": "${HELPSCOUT_APP_SECRET}",
@@ -53,11 +54,12 @@ The plugin needs your App ID and App Secret to connect to Help Scout. There are 
 ```
 
 **After:**
+
 ```json
 {
   "helpscout": {
     "command": "npx",
-    "args": ["-y", "help-scout-mcp-server"],
+    "args": ["-y", "@waylit/helpscout-mcp"],
     "env": {
       "HELPSCOUT_APP_ID": "your-actual-app-id",
       "HELPSCOUT_APP_SECRET": "your-actual-app-secret",
@@ -76,10 +78,12 @@ If you prefer not to put credentials in a file, you can set them as environment 
 **Mac:**
 
 Open Terminal and run:
+
 ```bash
 echo 'export HELPSCOUT_APP_ID="your-actual-app-id"' >> ~/.zshrc
 echo 'export HELPSCOUT_APP_SECRET="your-actual-app-secret"' >> ~/.zshrc
 ```
+
 Then restart Claude.
 
 **Windows:**

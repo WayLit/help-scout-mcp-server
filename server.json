@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.drewburchfield/help-scout-mcp",
+  "name": "io.github.waylit/helpscout-mcp",
   "title": "Help Scout MCP Server",
   "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
   "version": "1.7.0",
   "repository": {
-    "url": "https://github.com/drewburchfield/help-scout-mcp-server.git",
+    "url": "https://github.com/WayLit/help-scout-mcp-server.git",
     "source": "github"
   },
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "help-scout-mcp-server",
+      "identifier": "@waylit/helpscout-mcp",
       "version": "1.7.0",
       "runtimeHint": "npx",
       "transport": {
@@ -43,7 +43,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "docker.io/drewburchfield/help-scout-mcp-server:1.7.0",
+      "identifier": "docker.io/waylit/helpscout-mcp:1.7.0",
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"

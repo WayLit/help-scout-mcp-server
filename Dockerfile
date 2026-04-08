@@ -53,8 +53,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 ENTRYPOINT ["node", "dist/index.js"]
 
 # Labels for metadata
-LABEL name="help-scout-mcp-server" \
+LABEL name="@waylit/helpscout-mcp" \
       description="Help Scout MCP server for searching inboxes, conversations, and threads" \
       version="1.7.0" \
       maintainer="Drew Burchfield" \
-      io.modelcontextprotocol.server.name="io.github.drewburchfield/help-scout-mcp"
+      io.modelcontextprotocol.server.name="io.github.waylit/helpscout-mcp"
