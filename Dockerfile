@@ -55,6 +55,6 @@ ENTRYPOINT ["node", "dist/index.js"]
 # Labels for metadata
 LABEL name="@waylit/helpscout-mcp" \
       description="Help Scout MCP server for searching inboxes, conversations, and threads" \
-      version="1.7.0" \
+      version="1.7.1" \
       maintainer="Drew Burchfield" \
       io.modelcontextprotocol.server.name="io.github.waylit/helpscout-mcp"

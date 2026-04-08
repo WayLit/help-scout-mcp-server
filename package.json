@@ -1,6 +1,6 @@
 {
   "name": "@waylit/helpscout-mcp",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "packageManager": "pnpm@10.33.0",
   "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
   "keywords": [
@@ -111,5 +111,4 @@
       "hono@<4.12.12": ">=4.12.12"
     }
   }
-
 }
