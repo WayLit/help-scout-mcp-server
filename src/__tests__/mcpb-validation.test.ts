@@ -1,59 +1,59 @@
-import fs from 'fs';
-import path from 'path';
-import { describe, it, expect, beforeAll } from '@jest/globals';
+import fs from "fs";
+import path from "path";
+import { describe, it, expect, beforeAll } from "@jest/globals";
 
 // MCPB tests validate the extension build - require it to exist unless explicitly skipped
 // Set SKIP_MCPB_TESTS=true in CI if not building the MCPB extension
-const SKIP_MCPB_TESTS = process.env.SKIP_MCPB_TESTS === 'true';
+const SKIP_MCPB_TESTS = process.env.SKIP_MCPB_TESTS === "true";
 
 const describeIfNotSkipped = SKIP_MCPB_TESTS ? describe.skip : describe;
 
-describeIfNotSkipped('MCPB Extension Validation', () => {
-  const mcpbDir = path.join(process.cwd(), 'helpscout-mcp-extension');
-  const manifestPath = path.join(mcpbDir, 'manifest.json');
-  const buildDir = path.join(mcpbDir, 'build');
+describeIfNotSkipped("MCPB Extension Validation", () => {
+  const mcpbDir = path.join(process.cwd(), "helpscout-mcp-extension");
+  const manifestPath = path.join(mcpbDir, "manifest.json");
+  const buildDir = path.join(mcpbDir, "build");
   let manifest: any;
 
   beforeAll(() => {
     // Ensure MCPB is built before running tests
     if (!fs.existsSync(buildDir)) {
-      throw new Error('MCPB build directory not found. Run `npm run mcpb:build` first.');
+      throw new Error("MCPB build directory not found. Run `npm run mcpb:build` first.");
     }
 
     if (!fs.existsSync(manifestPath)) {
-      throw new Error('MCPB manifest.json not found.');
+      throw new Error("MCPB manifest.json not found.");
     }
 
-    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   });
 
-  describe('Manifest Validation', () => {
-    it('should have required MCPB fields', () => {
+  describe("Manifest Validation", () => {
+    it("should have required MCPB fields", () => {
       // Using manifest_version format per MCPB specification
-      expect(manifest.manifest_version).toBe('0.3');
-      expect(manifest.name).toBe('help-scout-mcp-server');
-      expect(manifest.display_name).toBe('Help Scout MCP Server');
+      expect(manifest.manifest_version).toBe("0.3");
+      expect(manifest.name).toBe("@waylit/helpscout-mcp");
+      expect(manifest.display_name).toBe("Help Scout MCP Server");
       expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/);
       expect(manifest.description).toBeTruthy();
-      expect(manifest.author).toHaveProperty('name');
-      expect(manifest.license).toBe('MIT');
+      expect(manifest.author).toHaveProperty("name");
+      expect(manifest.license).toBe("MIT");
     });
 
-    it('should have proper server configuration', () => {
-      expect(manifest.server.type).toBe('node');
-      expect(manifest.server.entry_point).toBe('build/server/index.js');
-      expect(manifest.server.mcp_config.command).toBe('node');
-      expect(manifest.server.mcp_config.args).toContain('${__dirname}/build/server/index.js');
+    it("should have proper server configuration", () => {
+      expect(manifest.server.type).toBe("node");
+      expect(manifest.server.entry_point).toBe("build/server/index.js");
+      expect(manifest.server.mcp_config.command).toBe("node");
+      expect(manifest.server.mcp_config.args).toContain("${__dirname}/build/server/index.js");
     });
 
-    it('should have OAuth2 authentication configuration', () => {
+    it("should have OAuth2 authentication configuration", () => {
       const userConfig = manifest.user_config;
 
       // Should have app_id and app_secret (not personal access token)
       expect(userConfig.app_id).toBeDefined();
       expect(userConfig.app_secret).toBeDefined();
-      expect(userConfig.app_id.type).toBe('string');
-      expect(userConfig.app_secret.type).toBe('string');
+      expect(userConfig.app_id.type).toBe("string");
+      expect(userConfig.app_secret.type).toBe("string");
       expect(userConfig.app_id.sensitive).toBe(true);
       expect(userConfig.app_secret.sensitive).toBe(true);
       expect(userConfig.app_id.required).toBe(true);
@@ -64,97 +64,87 @@ describeIfNotSkipped('MCPB Extension Validation', () => {
       expect(userConfig.personal_access_token).toBeUndefined();
     });
 
-    it('should have all 17 MCP tools declared', () => {
+    it("should have all 17 MCP tools declared", () => {
       expect(manifest.tools).toHaveLength(17);
 
       const expectedTools = [
-        'searchInboxes',
-        'searchConversations',
-        'getConversationSummary',
-        'getThreads',
-        'getServerTime',
-        'advancedConversationSearch',
-        'comprehensiveConversationSearch',
-        'listAllInboxes',
-        'structuredConversationFilter',
-        'getCustomer',
-        'listCustomers',
-        'searchCustomersByEmail',
-        'getCustomerContacts',
-        'getOrganization',
-        'listOrganizations',
-        'getOrganizationMembers',
-        'getOrganizationConversations'
+        "searchInboxes",
+        "searchConversations",
+        "getConversationSummary",
+        "getThreads",
+        "getServerTime",
+        "advancedConversationSearch",
+        "comprehensiveConversationSearch",
+        "listAllInboxes",
+        "structuredConversationFilter",
+        "getCustomer",
+        "listCustomers",
+        "searchCustomersByEmail",
+        "getCustomerContacts",
+        "getOrganization",
+        "listOrganizations",
+        "getOrganizationMembers",
+        "getOrganizationConversations",
       ];
 
       const toolNames = manifest.tools.map((tool: any) => tool.name);
-      expectedTools.forEach(toolName => {
+      expectedTools.forEach((toolName) => {
         expect(toolNames).toContain(toolName);
       });
     });
 
-    it('should not declare resources (resources are dynamic in MCP)', () => {
+    it("should not declare resources (resources are dynamic in MCP)", () => {
       // According to MCPB spec, resources are not included in manifest because
       // MCP resources are inherently dynamic - discovered at runtime
       expect(manifest.resources).toBeUndefined();
     });
 
-    it('should have 3 MCP prompts declared', () => {
+    it("should have 3 MCP prompts declared", () => {
       expect(manifest.prompts).toHaveLength(3);
-      
-      const expectedPrompts = [
-        'search-last-7-days',
-        'find-urgent-tags', 
-        'list-inbox-activity'
-      ];
+
+      const expectedPrompts = ["search-last-7-days", "find-urgent-tags", "list-inbox-activity"];
 
       const promptNames = manifest.prompts.map((prompt: any) => prompt.name);
-      expectedPrompts.forEach(promptName => {
+      expectedPrompts.forEach((promptName) => {
         expect(promptNames).toContain(promptName);
       });
     });
 
-    it('should have environment variable mapping', () => {
+    it("should have environment variable mapping", () => {
       const env = manifest.server.mcp_config.env;
 
-      expect(env.HELPSCOUT_APP_ID).toBe('${user_config.app_id}');
-      expect(env.HELPSCOUT_APP_SECRET).toBe('${user_config.app_secret}');
-      expect(env.HELPSCOUT_BASE_URL).toBe('${user_config.base_url}');
-      expect(env.REDACT_MESSAGE_CONTENT).toBe('${user_config.redact_message_content}');
-      expect(env.LOG_LEVEL).toBe('${user_config.log_level}');
-      expect(env.CACHE_TTL_SECONDS).toBe('${user_config.cache_ttl}');
-      expect(env.MAX_CACHE_SIZE).toBe('${user_config.max_cache_size}');
+      expect(env.HELPSCOUT_APP_ID).toBe("${user_config.app_id}");
+      expect(env.HELPSCOUT_APP_SECRET).toBe("${user_config.app_secret}");
+      expect(env.HELPSCOUT_BASE_URL).toBe("${user_config.base_url}");
+      expect(env.REDACT_MESSAGE_CONTENT).toBe("${user_config.redact_message_content}");
+      expect(env.LOG_LEVEL).toBe("${user_config.log_level}");
+      expect(env.CACHE_TTL_SECONDS).toBe("${user_config.cache_ttl}");
+      expect(env.MAX_CACHE_SIZE).toBe("${user_config.max_cache_size}");
     });
   });
 
-  describe('Build Structure Validation', () => {
-    it('should have correct entry point file', () => {
-      const entryPoint = path.join(buildDir, 'server/index.js');
+  describe("Build Structure Validation", () => {
+    it("should have correct entry point file", () => {
+      const entryPoint = path.join(buildDir, "server/index.js");
       expect(fs.existsSync(entryPoint)).toBe(true);
-      
+
       // Verify it's a valid JavaScript file
-      const content = fs.readFileSync(entryPoint, 'utf8');
-      expect(content).toContain('export');
+      const content = fs.readFileSync(entryPoint, "utf8");
+      expect(content).toContain("export");
       expect(content.length).toBeGreaterThan(1000); // Should be substantial
     });
 
-    it('should have production package.json with correct dependencies', () => {
-      const prodPackageJson = path.join(buildDir, 'package.json');
+    it("should have production package.json with correct dependencies", () => {
+      const prodPackageJson = path.join(buildDir, "package.json");
       expect(fs.existsSync(prodPackageJson)).toBe(true);
-      
-      const prodPkg = JSON.parse(fs.readFileSync(prodPackageJson, 'utf8'));
-      expect(prodPkg.type).toBe('module');
-      
+
+      const prodPkg = JSON.parse(fs.readFileSync(prodPackageJson, "utf8"));
+      expect(prodPkg.type).toBe("module");
+
       // Check all required dependencies are present
-      const requiredDeps = [
-        '@modelcontextprotocol/sdk',
-        'axios',
-        'lru-cache', 
-        'zod',
-        'dotenv'
-      ];
-      
-      requiredDeps.forEach(dep => {
+      const requiredDeps = ["@modelcontextprotocol/sdk", "axios", "lru-cache", "zod", "dotenv"];
+
+      requiredDeps.forEach((dep) => {
         expect(prodPkg.dependencies[dep]).toBeDefined();
       });
 
@@ -162,107 +152,107 @@ describeIfNotSkipped('MCPB Extension Validation', () => {
       expect(prodPkg.devDependencies).toBeUndefined();
     });
 
-    it('should have all required dependencies installed', () => {
-      const nodeModules = path.join(buildDir, 'node_modules');
+    it("should have all required dependencies installed", () => {
+      const nodeModules = path.join(buildDir, "node_modules");
       expect(fs.existsSync(nodeModules)).toBe(true);
-      
+
       // Check critical dependencies are actually installed
-      const criticalDeps = ['axios', 'lru-cache', 'zod', '@modelcontextprotocol'];
-      
-      criticalDeps.forEach(dep => {
+      const criticalDeps = ["axios", "lru-cache", "zod", "@modelcontextprotocol"];
+
+      criticalDeps.forEach((dep) => {
         const depPath = path.join(nodeModules, dep);
         expect(fs.existsSync(depPath)).toBe(true);
       });
     });
 
-    it('should have all server modules built', () => {
-      const serverDir = path.join(buildDir, 'server');
+    it("should have all server modules built", () => {
+      const serverDir = path.join(buildDir, "server");
       const expectedFiles = [
-        'index.js',
-        'tools/index.js',
-        'resources/index.js', 
-        'prompts/index.js',
-        'schema/types.js',
-        'utils/config.js',
-        'utils/helpscout-client.js',
-        'utils/logger.js',
-        'utils/cache.js',
-        'utils/mcp-errors.js'
+        "index.js",
+        "tools/index.js",
+        "resources/index.js",
+        "prompts/index.js",
+        "schema/types.js",
+        "utils/config.js",
+        "utils/helpscout-client.js",
+        "utils/logger.js",
+        "utils/cache.js",
+        "utils/mcp-errors.js",
       ];
 
-      expectedFiles.forEach(file => {
+      expectedFiles.forEach((file) => {
         const filePath = path.join(serverDir, file);
         expect(fs.existsSync(filePath)).toBe(true);
       });
     });
   });
 
-  describe('File Content Validation', () => {
-    it('should have valid server entry point that imports MCP SDK', () => {
-      const entryPoint = path.join(buildDir, 'server/index.js');
-      const content = fs.readFileSync(entryPoint, 'utf8');
-      
-      expect(content).toContain('@modelcontextprotocol/sdk');
-      expect(content).toContain('Server');
-      expect(content).toContain('StdioServerTransport');
+  describe("File Content Validation", () => {
+    it("should have valid server entry point that imports MCP SDK", () => {
+      const entryPoint = path.join(buildDir, "server/index.js");
+      const content = fs.readFileSync(entryPoint, "utf8");
+
+      expect(content).toContain("@modelcontextprotocol/sdk");
+      expect(content).toContain("Server");
+      expect(content).toContain("StdioServerTransport");
     });
 
-    it('should have helpscout client that imports axios', () => {
-      const clientPath = path.join(buildDir, 'server/utils/helpscout-client.js');
-      const content = fs.readFileSync(clientPath, 'utf8');
-      
-      expect(content).toContain('axios');
-      expect(content).toContain('cache'); // Uses cache module instead of direct LRUCache import
+    it("should have helpscout client that imports axios", () => {
+      const clientPath = path.join(buildDir, "server/utils/helpscout-client.js");
+      const content = fs.readFileSync(clientPath, "utf8");
+
+      expect(content).toContain("axios");
+      expect(content).toContain("cache"); // Uses cache module instead of direct LRUCache import
     });
 
-    it('should have tools that export all expected functions', () => {
-      const toolsPath = path.join(buildDir, 'server/tools/index.js');
-      const content = fs.readFileSync(toolsPath, 'utf8');
-      
+    it("should have tools that export all expected functions", () => {
+      const toolsPath = path.join(buildDir, "server/tools/index.js");
+      const content = fs.readFileSync(toolsPath, "utf8");
+
       const expectedExports = [
-        'searchInboxes',
-        'searchConversations',
-        'getConversationSummary', 
-        'getThreads',
-        'getServerTime',
-        'advancedConversationSearch',
-        'comprehensiveConversationSearch',
-        'getCustomer',
-        'listCustomers',
-        'searchCustomersByEmail',
-        'getCustomerContacts',
-        'getOrganization',
-        'listOrganizations',
-        'getOrganizationMembers',
-        'getOrganizationConversations'
+        "searchInboxes",
+        "searchConversations",
+        "getConversationSummary",
+        "getThreads",
+        "getServerTime",
+        "advancedConversationSearch",
+        "comprehensiveConversationSearch",
+        "getCustomer",
+        "listCustomers",
+        "searchCustomersByEmail",
+        "getCustomerContacts",
+        "getOrganization",
+        "listOrganizations",
+        "getOrganizationMembers",
+        "getOrganizationConversations",
       ];
 
-      expectedExports.forEach(exportName => {
+      expectedExports.forEach((exportName) => {
         expect(content).toContain(exportName);
       });
     });
   });
 
-  describe('Cross-Platform Compatibility', () => {
-    it('should use path.join for all paths', () => {
-      const buildScript = path.join(process.cwd(), 'scripts/build-mcpb.js');
-      const content = fs.readFileSync(buildScript, 'utf8');
+  describe("Cross-Platform Compatibility", () => {
+    it("should use path.join for all paths", () => {
+      const buildScript = path.join(process.cwd(), "scripts/build-mcpb.js");
+      const content = fs.readFileSync(buildScript, "utf8");
 
       // Should use path.join, not hardcoded slashes
-      expect(content).toContain('path.join');
+      expect(content).toContain("path.join");
 
       // Should not use platform-specific commands
-      expect(content).not.toContain('cp -r');
-      expect(content).not.toContain('xcopy');
+      expect(content).not.toContain("cp -r");
+      expect(content).not.toContain("xcopy");
     });
 
-    it('should have cross-platform copyDirectory function', () => {
-      const buildScript = path.join(process.cwd(), 'scripts/build-mcpb.js');
-      const content = fs.readFileSync(buildScript, 'utf8');
-      
-      expect(content).toContain('copyDirectory');
-      expect(content).toContain('fs.readdirSync');
-      expect(content).toContain('fs.copyFileSync');
+    it("should have cross-platform copyDirectory function", () => {
+      const buildScript = path.join(process.cwd(), "scripts/build-mcpb.js");
+      const content = fs.readFileSync(buildScript, "utf8");
+
+      expect(content).toContain("copyDirectory");
+      expect(content).toContain("fs.readdirSync");
+      expect(content).toContain("fs.copyFileSync");
     });
   });
 });

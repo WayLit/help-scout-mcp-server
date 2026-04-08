@@ -1,5 +1,5 @@
 {
-  "name": "help-scout-mcp-server",
+  "name": "@waylit/helpscout-mcp",
   "version": "1.7.0",
   "packageManager": "pnpm@10.33.0",
   "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
@@ -19,21 +19,31 @@
     "nodejs",
     "typescript"
   ],
-  "homepage": "https://github.com/drewburchfield/help-scout-mcp-server#readme",
+  "homepage": "https://github.com/WayLit/help-scout-mcp-server#readme",
   "bugs": {
-    "url": "https://github.com/drewburchfield/help-scout-mcp-server/issues"
+    "url": "https://github.com/WayLit/help-scout-mcp-server/issues"
   },
   "license": "MIT",
   "author": {
     "name": "Drew Burchfield",
     "url": "https://github.com/drewburchfield"
   },
+  "contributors": [
+    {
+      "name": "Satya Mishra",
+      "url": "https://github.com/WayLit"
+    }
+  ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/drewburchfield/help-scout-mcp-server.git"
+    "url": "git+https://github.com/WayLit/help-scout-mcp-server.git"
   },
   "bin": {
-    "help-scout-mcp-server": "dist/index.js"
+    "helpscout-mcp": "dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "files": [
     "dist/",
@@ -93,7 +103,7 @@
   "engines": {
     "node": ">=20.19.0"
   },
-  "mcpName": "io.github.drewburchfield/help-scout-mcp",
+  "mcpName": "io.github.waylit/helpscout-mcp",
   "pnpm": {
     "overrides": {
       "@hono/node-server@<1.19.13": ">=1.19.13",

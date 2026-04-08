@@ -2,7 +2,7 @@
   "mcpServers": {
     "helpscout": {
       "command": "npx",
-      "args": ["help-scout-mcp-server"],
+      "args": ["@waylit/helpscout-mcp"],
       "env": {
         "HELPSCOUT_CLIENT_ID": "your-client-id-here",
         "HELPSCOUT_CLIENT_SECRET": "your-client-secret-here",

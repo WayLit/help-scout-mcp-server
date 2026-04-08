@@ -1,6 +1,6 @@
 {
   "manifest_version": "0.3",
-  "name": "help-scout-mcp-server",
+  "name": "@waylit/helpscout-mcp",
   "display_name": "Help Scout MCP Server",
   "version": "1.7.0",
   "description": "Connect Claude and other AI assistants to your Help Scout conversations, customers, organizations, and inbox data.",
@@ -11,9 +11,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/drewburchfield/help-scout-mcp-server"
+    "url": "https://github.com/WayLit/help-scout-mcp-server"
   },
-  "documentation": "https://github.com/drewburchfield/help-scout-mcp-server#readme",
+  "documentation": "https://github.com/WayLit/help-scout-mcp-server#readme",
   "icon": "icon.png",
   "screenshots": [],
   "server": {
@@ -21,9 +21,7 @@
     "entry_point": "build/server/index.js",
     "mcp_config": {
       "command": "node",
-      "args": [
-        "${__dirname}/build/server/index.js"
-      ],
+      "args": ["${__dirname}/build/server/index.js"],
       "env": {
         "HELPSCOUT_APP_ID": "${user_config.app_id}",
         "HELPSCOUT_APP_SECRET": "${user_config.app_secret}",
