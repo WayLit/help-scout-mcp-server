@@ -94,6 +94,12 @@ scripts/*.state.json
 # Braintrust session logs
 .braintrust/
 
+# Worker dev secrets & build artifacts
+worker/.dev.vars
+worker/node_modules/
+worker/.wrangler/
+worker/dist/
+
 # Sidecar projects
 meridian-sim/
 

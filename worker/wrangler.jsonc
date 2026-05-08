@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "helpscout-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV", "id": "<ADD-KV-ID>" }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "MCP_OBJECT", "class_name": "HelpScoutMCP" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["HelpScoutMCP"] }
+  ],
+  "observability": { "enabled": true },
+  "dev": { "port": 8788 }
+  // Secrets (via `wrangler secret put`):
+  //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+  //   HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET,
+  //   COOKIE_ENCRYPTION_KEY (generate with: openssl rand -hex 32)
+}

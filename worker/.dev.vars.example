@@ -1,0 +1,16 @@
+# Copy this file to .dev.vars and fill in real values for local dev.
+# In production, set these via: wrangler secret put <NAME>
+
+# Google OAuth (https://console.cloud.google.com/apis/credentials)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+# Optional: restrict login to a single Google Workspace domain, e.g. "example.com"
+# GOOGLE_HOSTED_DOMAIN=
+
+# Help Scout OAuth App (https://secure.helpscout.net/users/apps)
+# Redirect URI must be: https://<your-worker>.workers.dev/callback/helpscout
+HELPSCOUT_APP_ID=
+HELPSCOUT_APP_SECRET=
+
+# Random secret for signing cookies. Generate with: openssl rand -hex 32
+COOKIE_ENCRYPTION_KEY=
