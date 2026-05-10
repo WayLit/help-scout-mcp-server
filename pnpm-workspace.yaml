@@ -5,3 +5,7 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - preact@10.28.2
   - lodash@4.18.1
+overrides:
+  '@hono/node-server@<1.19.13': '>=1.19.13'
+  tmp@<=0.2.3: '>=0.2.4'
+  hono@<4.12.12: '>=4.12.12'

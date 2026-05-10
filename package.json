@@ -106,12 +106,5 @@
   "engines": {
     "node": ">=24.0.0"
   },
-  "mcpName": "io.github.waylit/helpscout-mcp",
-  "pnpm": {
-    "overrides": {
-      "@hono/node-server@<1.19.13": ">=1.19.13",
-      "tmp@<=0.2.3": ">=0.2.4",
-      "hono@<4.12.12": ">=4.12.12"
-    }
-  }
+  "mcpName": "io.github.waylit/helpscout-mcp"
 }
