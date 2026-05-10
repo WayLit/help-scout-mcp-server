@@ -2,8 +2,6 @@
  * @jest-environment node
  */
 
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-
 // Mock logger first
 const mockLogger = {
   info: jest.fn(),

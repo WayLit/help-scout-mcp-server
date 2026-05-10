@@ -3,7 +3,6 @@
  * More challenging scenarios: rate limits, concurrency, boundary conditions
  */
 
-import { jest } from '@jest/globals';
 import nock from 'nock';
 
 process.env.NODE_ENV = 'test';

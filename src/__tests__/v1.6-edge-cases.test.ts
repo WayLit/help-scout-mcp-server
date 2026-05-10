@@ -3,7 +3,6 @@
  * Tests specifically targeting inbox auto-discovery and multi-status search
  */
 
-import { jest } from '@jest/globals';
 import nock from 'nock';
 
 // Set test environment before imports

@@ -1,5 +1,3 @@
-import { jest } from '@jest/globals';
-
 describe('Authentication Configuration', () => {
   const originalEnv = process.env;
 

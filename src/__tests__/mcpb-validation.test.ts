@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { describe, it, expect, beforeAll } from "@jest/globals";
 
 // MCPB tests validate the extension build - require it to exist unless explicitly skipped
 // Set SKIP_MCPB_TESTS=true in CI if not building the MCPB extension
