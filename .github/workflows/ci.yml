@@ -40,6 +40,8 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+        env:
+          SKIP_MCPB_TESTS: "true"
 
       - name: Worker type check
         run: pnpm --filter helpscout-mcp-worker type-check

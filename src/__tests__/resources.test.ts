@@ -421,6 +421,7 @@ describe('ResourceHandler', () => {
         nock(baseURL)
           .get('/mailboxes')
           .query({ page: 1, size: 50 })
+          .times(4)
           .reply(500, { message: 'Internal Server Error' });
 
         await expect(

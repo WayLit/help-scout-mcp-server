@@ -13,6 +13,7 @@ const baseURL = 'https://api.helpscout.net/v2';
 
 const mockOAuthToken = () => {
   nock(baseURL)
+    .persist()
     .post('/oauth2/token')
     .reply(200, {
       access_token: 'test-token',
@@ -54,10 +55,11 @@ describe('v1.6.0 Stress Tests', () => {
     it('should handle 429 rate limit on one status', async () => {
       mockOAuthToken();
 
-      // Active returns 429
+      // Active returns 429 (retried until exhausted)
       nock(baseURL)
         .get('/conversations')
         .query(params => params.status === 'active')
+        .times(4)
         .reply(429, { error: 'Rate limited' }, { 'Retry-After': '1' });
 
       // Pending and closed succeed

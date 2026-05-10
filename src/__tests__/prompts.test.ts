@@ -10,6 +10,7 @@ const mockLogger = {
   warn: jest.fn(),
 };
 
+// @ts-expect-error - jest.unstable_mockModule exists at runtime but is missing from @types/jest@30
 jest.unstable_mockModule('../utils/logger.js', () => ({
   logger: mockLogger,
 }));
