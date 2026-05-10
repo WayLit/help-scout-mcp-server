@@ -1,35 +1,29 @@
 /**
- * Auth handler — chained Google SSO + Help Scout OAuth.
+ * Auth handler — Cloudflare Access for identity, Help Scout authorization-code
+ * for per-user API access.
  *
  * Flow:
- *   GET  /authorize          → approval dialog or direct redirect to Google
- *   POST /authorize          → validate CSRF, record consent, redirect to Google
- *   GET  /callback/google    → exchange code, check KV for Help Scout tokens,
- *                              either skip to completeAuthorization or redirect to Help Scout
- *   GET  /callback/helpscout → exchange code, store tokens in KV, completeAuthorization
+ *   GET  /authorize          → Access-fronted; verifies JWT, then either
+ *                              completes auth (if user has valid HS tokens) or
+ *                              redirects to Help Scout consent.
+ *   GET  /callback/helpscout → exchanges HS code, writes tokens into the user's
+ *                              Durable Object, then completes auth.
+ *
+ * Cloudflare Access handles all of: identity (Google Workspace), MFA, device
+ * posture, consent UI, CSRF, session management. The worker only sees
+ * authenticated requests with a JWT in `Cf-Access-Jwt-Assertion`.
  */
 import { Hono } from "hono";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 
+import { AccessAuthError, verifyAccessJwt } from "./access-jwt";
+import { logger, newRequestId } from "./logger";
 import type { Env, HelpScoutTokenRecord, Props } from "./types";
-import { helpScoutTokensKey } from "./types";
 import {
-  addApprovedClient,
-  bindStateToSession,
   createOAuthState,
   deleteOAuthState,
-  generateCSRFProtection,
-  isClientApproved,
   readOAuthState,
-  renderApprovalDialog,
-  updateOAuthState,
-  validateCSRFToken,
-  validateSessionBinding,
 } from "./workers-oauth-utils";
-
-const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
 
 const HELPSCOUT_AUTHORIZE_URL =
   "https://secure.helpscout.net/authentication/authorizeClientApplication";
@@ -39,12 +33,6 @@ type Bindings = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-const SERVER_INFO = {
-  name: "Help Scout MCP",
-  description:
-    "Remote MCP server that lets AI assistants search and read your Help Scout conversations, customers, and organizations.",
-};
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function absoluteCallback(request: Request, path: string): string {
@@ -52,86 +40,61 @@ function absoluteCallback(request: Request, path: string): string {
   return `${url.protocol}//${url.host}${path}`;
 }
 
-function redirectToGoogle(
-  request: Request,
-  env: Env,
-  stateToken: string,
-  headers: Record<string, string> = {},
-): Response {
-  const params = new URLSearchParams({
-    client_id: env.GOOGLE_CLIENT_ID,
-    redirect_uri: absoluteCallback(request, "/callback/google"),
-    response_type: "code",
-    scope: "openid email profile",
-    state: stateToken,
-    access_type: "online",
-    prompt: "select_account",
-  });
-  if (env.GOOGLE_HOSTED_DOMAIN) {
-    params.set("hd", env.GOOGLE_HOSTED_DOMAIN);
+/**
+ * Decide whether an MCP client's `redirect_uri` is allowed.
+ *
+ * Cloudflare Access proves *who* the user is, but with dynamic client
+ * registration enabled the OAuthProvider would otherwise hand a code to any
+ * `redirect_uri` an attacker registers. This is the gate that stops a
+ * phished, Access-authenticated user from silently authorizing an
+ * attacker-controlled MCP client.
+ *
+ * Always allows loopback (`localhost`, `127.0.0.1`, `[::1]`) so dev/desktop
+ * clients work without configuration. For all other hosts, the deployer must
+ * opt in via `OAUTH_ALLOWED_REDIRECT_HOSTS` — comma-separated `host` patterns
+ * (`claude.ai`) or wildcard subdomains (`*.claude.ai`). Without an allowlist,
+ * a misconfigured production deployment fails closed instead of silently
+ * accepting any host.
+ */
+export function isAllowedRedirectUri(
+  redirectUri: string | undefined,
+  allowedHostsList: string | undefined,
+): boolean {
+  if (!redirectUri) return false;
+  let url: URL;
+  try {
+    url = new URL(redirectUri);
+  } catch {
+    return false;
   }
-  return new Response(null, {
-    status: 302,
-    headers: {
-      ...headers,
-      Location: `${GOOGLE_AUTHORIZE_URL}?${params.toString()}`,
-    },
-  });
+  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+  const hostname = url.hostname.toLowerCase();
+
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") {
+    return true;
+  }
+
+  if (!allowedHostsList) return false;
+  const patterns = allowedHostsList
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  for (const pattern of patterns) {
+    if (pattern === hostname) return true;
+    if (pattern.startsWith("*.") && hostname.endsWith(pattern.slice(1))) return true;
+  }
+  return false;
 }
 
-function redirectToHelpScout(env: Env, stateToken: string, headers: Record<string, string> = {}): Response {
+function redirectToHelpScout(env: Env, stateToken: string): Response {
   const params = new URLSearchParams({
     client_id: env.HELPSCOUT_APP_ID,
     state: stateToken,
   });
   return new Response(null, {
     status: 302,
-    headers: {
-      ...headers,
-      Location: `${HELPSCOUT_AUTHORIZE_URL}?${params.toString()}`,
-    },
+    headers: { Location: `${HELPSCOUT_AUTHORIZE_URL}?${params.toString()}` },
   });
-}
-
-async function exchangeGoogleCode(
-  request: Request,
-  env: Env,
-  code: string,
-): Promise<{ accessToken: string }> {
-  const body = new URLSearchParams({
-    code,
-    client_id: env.GOOGLE_CLIENT_ID,
-    client_secret: env.GOOGLE_CLIENT_SECRET,
-    redirect_uri: absoluteCallback(request, "/callback/google"),
-    grant_type: "authorization_code",
-  });
-  const res = await fetch(GOOGLE_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  if (!res.ok) {
-    throw new Error(`Google token exchange failed (${res.status}): ${await res.text()}`);
-  }
-  const json = (await res.json()) as { access_token: string };
-  return { accessToken: json.access_token };
-}
-
-async function fetchGoogleUserInfo(accessToken: string): Promise<{ email: string; name: string }> {
-  const res = await fetch(GOOGLE_USERINFO_URL, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) {
-    throw new Error(`Google userinfo failed (${res.status}): ${await res.text()}`);
-  }
-  const json = (await res.json()) as {
-    email?: string;
-    name?: string;
-    email_verified?: boolean;
-  };
-  if (!json.email) throw new Error("Google userinfo missing email");
-  if (json.email_verified === false) throw new Error("Google email not verified");
-  return { email: json.email, name: json.name ?? json.email };
 }
 
 async function exchangeHelpScoutCode(env: Env, code: string): Promise<HelpScoutTokenRecord> {
@@ -145,6 +108,7 @@ async function exchangeHelpScoutCode(env: Env, code: string): Promise<HelpScoutT
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
     throw new Error(`Help Scout token exchange failed (${res.status}): ${await res.text()}`);
@@ -162,58 +126,37 @@ async function exchangeHelpScoutCode(env: Env, code: string): Promise<HelpScoutT
 }
 
 /**
- * Try to refresh a Help Scout access token. Returns null on any failure
- * (revoked, expired, network error) so callers can fall through to a
- * full re-consent flow instead of locking the user out.
+ * Send the freshly-minted HS tokens into the user's Durable Object.
+ * Idempotent — overwrites whatever was stored.
  */
-async function tryRefreshHelpScoutTokens(
-  env: Env,
-  refreshToken: string,
-): Promise<HelpScoutTokenRecord | null> {
-  try {
-    const body = new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: env.HELPSCOUT_APP_ID,
-      client_secret: env.HELPSCOUT_APP_SECRET,
-      grant_type: "refresh_token",
-    });
-    const res = await fetch(HELPSCOUT_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    };
-    return {
-      accessToken: json.access_token,
-      refreshToken: json.refresh_token,
-      expiresAt: Date.now() + json.expires_in * 1000,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function loadHelpScoutTokens(env: Env, email: string): Promise<HelpScoutTokenRecord | null> {
-  const raw = await env.OAUTH_KV.get(helpScoutTokensKey(email));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as HelpScoutTokenRecord;
-  } catch {
-    return null;
-  }
-}
-
-async function storeHelpScoutTokens(
+async function storeHelpScoutTokensInDO(
   env: Env,
   email: string,
   record: HelpScoutTokenRecord,
 ): Promise<void> {
-  await env.OAUTH_KV.put(helpScoutTokensKey(email), JSON.stringify(record));
+  const id = env.MCP_OBJECT.idFromName(email);
+  const stub = env.MCP_OBJECT.get(id);
+  const res = await stub.fetch("https://internal/store-tokens", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(record),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to store tokens in DO (${res.status}): ${await res.text()}`);
+  }
+}
+
+/**
+ * Ask the user's DO whether it has valid (non-expired) HS tokens.
+ * Returns true if a tool call could succeed without re-consent.
+ */
+async function userHasValidTokens(env: Env, email: string): Promise<boolean> {
+  const id = env.MCP_OBJECT.idFromName(email);
+  const stub = env.MCP_OBJECT.get(id);
+  const res = await stub.fetch("https://internal/has-valid-tokens");
+  if (!res.ok) return false;
+  const json = (await res.json()) as { valid: boolean };
+  return json.valid;
 }
 
 async function completeAuth(
@@ -228,154 +171,111 @@ async function completeAuth(
     metadata: { label: props.name },
     props,
   });
-  return new Response(null, {
-    status: 302,
-    headers: { Location: redirectTo },
-  });
+  return new Response(null, { status: 302, headers: { Location: redirectTo } });
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
+app.get("/healthz", (c) =>
+  c.json({ ok: true, name: "helpscout-mcp", time: new Date().toISOString() }),
+);
+
 app.get("/authorize", async (c) => {
+  logger.setLevel(c.env.LOG_LEVEL);
+  const requestId = newRequestId();
   const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
-  const { clientId } = oauthReqInfo;
-  if (!clientId) return c.text("Invalid authorization request", 400);
-
-  // Skip consent dialog if the user already approved this client
-  if (await isClientApproved(c.req.raw, clientId, c.env.COOKIE_ENCRYPTION_KEY)) {
-    const { stateToken } = await createOAuthState(oauthReqInfo, c.env.OAUTH_KV);
-    const { setCookie } = bindStateToSession(stateToken);
-    return redirectToGoogle(c.req.raw, c.env, stateToken, { "Set-Cookie": setCookie });
+  if (!oauthReqInfo.clientId) {
+    logger.warn("authorize: missing clientId", { requestId });
+    return c.text("Invalid authorization request", 400);
   }
 
-  const client = await c.env.OAUTH_PROVIDER.lookupClient(clientId);
-  const { token: csrfToken, setCookie } = generateCSRFProtection();
-  return renderApprovalDialog(c.req.raw, {
-    client,
-    server: SERVER_INFO,
-    state: { oauthReqInfo },
-    csrfToken,
-    setCookie,
-  });
-});
-
-app.post("/authorize", async (c) => {
-  const form = await c.req.formData();
-  const csrfToken = String(form.get("csrf_token") ?? "");
-  const encodedState = String(form.get("state") ?? "");
-
-  if (!(await validateCSRFToken(c.req.raw, csrfToken, c.env.COOKIE_ENCRYPTION_KEY))) {
-    return c.text("CSRF validation failed", 403);
+  // Reject unknown redirect_uris before any state mutation. With dynamic client
+  // registration enabled, this is the gate that stops a phished
+  // Access-authenticated user from silently authorizing an attacker-controlled
+  // client. Loopback is always allowed; remote hosts require an explicit
+  // allowlist via OAUTH_ALLOWED_REDIRECT_HOSTS.
+  if (!isAllowedRedirectUri(oauthReqInfo.redirectUri, c.env.OAUTH_ALLOWED_REDIRECT_HOSTS)) {
+    logger.warn("authorize: redirect_uri rejected by allowlist", {
+      requestId,
+      clientId: oauthReqInfo.clientId,
+      redirectUri: oauthReqInfo.redirectUri,
+    });
+    return c.text("redirect_uri not allowed", 400);
   }
 
-  let oauthReqInfo: AuthRequest;
+  // Cloudflare Access has already authenticated the user — just verify the JWT.
+  let identity;
   try {
-    const parsed = JSON.parse(atob(encodedState)) as { oauthReqInfo: AuthRequest };
-    oauthReqInfo = parsed.oauthReqInfo;
-  } catch {
-    return c.text("Invalid state payload", 400);
-  }
-  if (!oauthReqInfo?.clientId) return c.text("Invalid authorization request", 400);
-
-  const { stateToken } = await createOAuthState(oauthReqInfo, c.env.OAUTH_KV);
-  const approvedCookie = await addApprovedClient(
-    c.req.raw,
-    oauthReqInfo.clientId,
-    c.env.COOKIE_ENCRYPTION_KEY,
-  );
-  const { setCookie: sessionCookie } = bindStateToSession(stateToken);
-
-  // Two Set-Cookie headers need to go out together.
-  const headers = new Headers();
-  headers.append("Set-Cookie", approvedCookie);
-  headers.append("Set-Cookie", sessionCookie);
-  headers.set(
-    "Location",
-    `${GOOGLE_AUTHORIZE_URL}?${new URLSearchParams({
-      client_id: c.env.GOOGLE_CLIENT_ID,
-      redirect_uri: absoluteCallback(c.req.raw, "/callback/google"),
-      response_type: "code",
-      scope: "openid email profile",
-      state: stateToken,
-      access_type: "online",
-      prompt: "select_account",
-      ...(c.env.GOOGLE_HOSTED_DOMAIN ? { hd: c.env.GOOGLE_HOSTED_DOMAIN } : {}),
-    }).toString()}`,
-  );
-  return new Response(null, { status: 302, headers });
-});
-
-app.get("/callback/google", async (c) => {
-  const code = c.req.query("code");
-  const stateToken = c.req.query("state");
-  if (!code || !stateToken) return c.text("Missing code or state", 400);
-
-  if (!validateSessionBinding(c.req.raw, stateToken)) {
-    return c.text("Session binding validation failed", 403);
-  }
-
-  const stored = await readOAuthState(stateToken, c.env.OAUTH_KV);
-  if (!stored) return c.text("State expired or not found", 400);
-
-  // Exchange Google code for userinfo
-  const { accessToken } = await exchangeGoogleCode(c.req.raw, c.env, code);
-  const googleUser = await fetchGoogleUserInfo(accessToken);
-
-  // Optional: enforce hosted domain at the server too (Google's hd is a hint only)
-  if (c.env.GOOGLE_HOSTED_DOMAIN) {
-    const expected = c.env.GOOGLE_HOSTED_DOMAIN.toLowerCase();
-    if (!googleUser.email.toLowerCase().endsWith(`@${expected}`)) {
-      return c.text(`Access restricted to @${expected} accounts`, 403);
+    identity = await verifyAccessJwt(c.req.raw, c.env);
+  } catch (err) {
+    if (err instanceof AccessAuthError) {
+      logger.warn("authorize: access JWT rejected", { requestId, reason: err.message });
+      return c.text(err.message, err.status);
     }
+    throw err;
   }
 
-  // If the user already has valid Help Scout tokens, skip the second leg.
-  // Verify the refresh token still works first — Help Scout tokens can be
-  // revoked or expired. If we trusted the KV record blindly and the token
-  // was stale, the user would be locked out: every retry of /authorize
-  // would short-circuit here, and every tool call would return UNAUTHORIZED.
-  const existing = await loadHelpScoutTokens(c.env, googleUser.email);
-  if (existing && existing.refreshToken) {
-    const refreshed = await tryRefreshHelpScoutTokens(c.env, existing.refreshToken);
-    if (refreshed) {
-      await storeHelpScoutTokens(c.env, googleUser.email, refreshed);
-      await deleteOAuthState(stateToken, c.env.OAUTH_KV);
-      return completeAuth(c.env, stored.oauthReqInfo, {
-        email: googleUser.email,
-        name: googleUser.name,
-      });
-    }
-    // Stale token — fall through to re-consent. We intentionally do NOT
-    // delete the KV record here; storeHelpScoutTokens after the new
-    // /callback/helpscout will overwrite it.
+  logger.info("authorize: identity verified", {
+    requestId,
+    email: identity.email,
+    isServiceToken: identity.isServiceToken,
+  });
+
+  // If the user already has valid HS tokens, skip the HS consent leg.
+  if (await userHasValidTokens(c.env, identity.email)) {
+    logger.info("authorize: existing HS tokens, completing auth", { requestId, email: identity.email });
+    return completeAuth(c.env, oauthReqInfo, {
+      email: identity.email,
+      name: identity.name,
+    });
   }
 
-  // Otherwise, store googleUser into state and redirect to Help Scout authorize
-  await updateOAuthState(stateToken, c.env.OAUTH_KV, { googleUser });
+  // Otherwise, kick off the HS authorization-code flow.
+  const { stateToken } = await createOAuthState(oauthReqInfo, c.env.OAUTH_KV, {
+    accessIdentity: { email: identity.email, name: identity.name },
+  });
+  logger.info("authorize: redirecting to Help Scout", { requestId, email: identity.email });
   return redirectToHelpScout(c.env, stateToken);
 });
 
 app.get("/callback/helpscout", async (c) => {
+  logger.setLevel(c.env.LOG_LEVEL);
+  const requestId = newRequestId();
   const code = c.req.query("code");
   const stateToken = c.req.query("state");
-  if (!code || !stateToken) return c.text("Missing code or state", 400);
-
-  // Prevent session fixation: the same browser that started the flow
-  // (and received mcp_session in /authorize) must complete it.
-  if (!validateSessionBinding(c.req.raw, stateToken)) {
-    return c.text("Session binding validation failed", 403);
+  if (!code || !stateToken) {
+    logger.warn("hs callback: missing code or state", { requestId });
+    return c.text("Missing code or state", 400);
   }
 
   const stored = await readOAuthState(stateToken, c.env.OAUTH_KV);
-  if (!stored?.googleUser) return c.text("State expired or not found", 400);
+  if (!stored?.accessIdentity) {
+    logger.warn("hs callback: state expired or not found", { requestId });
+    return c.text("State expired or not found", 400);
+  }
 
-  const tokens = await exchangeHelpScoutCode(c.env, code);
-  await storeHelpScoutTokens(c.env, stored.googleUser.email, tokens);
+  let tokens;
+  try {
+    tokens = await exchangeHelpScoutCode(c.env, code);
+  } catch (err) {
+    logger.error("hs callback: token exchange failed", {
+      requestId,
+      email: stored.accessIdentity.email,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.text("Help Scout authentication failed", 502);
+  }
+
+  await storeHelpScoutTokensInDO(c.env, stored.accessIdentity.email, tokens);
   await deleteOAuthState(stateToken, c.env.OAUTH_KV);
+  logger.info("hs callback: tokens stored, completing auth", {
+    requestId,
+    email: stored.accessIdentity.email,
+  });
 
   return completeAuth(c.env, stored.oauthReqInfo, {
-    email: stored.googleUser.email,
-    name: stored.googleUser.name,
+    email: stored.accessIdentity.email,
+    name: stored.accessIdentity.name,
   });
 });
 

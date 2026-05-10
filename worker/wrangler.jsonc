@@ -4,8 +4,16 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-04-10",
   "compatibility_flags": ["nodejs_compat"],
+  // OAUTH_KV stores transient OAuth state (10-minute TTL).
+  // Help Scout per-user tokens live in DO storage on HelpScoutMCP, not here.
+  // Create with: wrangler kv namespace create OAUTH_KV
+  // Create preview: wrangler kv namespace create OAUTH_KV --preview
   "kv_namespaces": [
-    { "binding": "OAUTH_KV", "id": "<ADD-KV-ID>" }
+    {
+      "binding": "OAUTH_KV",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID",
+      "preview_id": "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+    }
   ],
   "durable_objects": {
     "bindings": [
@@ -16,9 +24,17 @@
     { "tag": "v1", "new_sqlite_classes": ["HelpScoutMCP"] }
   ],
   "observability": { "enabled": true },
-  "dev": { "port": 8788 }
-  // Secrets (via `wrangler secret put`):
-  //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
-  //   HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET,
-  //   COOKIE_ENCRYPTION_KEY (generate with: openssl rand -hex 32)
+  "dev": { "port": 8788 },
+  // Custom domain. waylit.ai must be a Cloudflare-managed zone in this account
+  // before deploy. `custom_domain: true` provisions DNS automatically.
+  "routes": [
+    { "pattern": "helpscout-mcp.waylit.ai", "custom_domain": true }
+  ]
+  // Secrets (set via `wrangler secret put <NAME>`):
+  //   HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET
+  //   CF_ACCESS_TEAM_DOMAIN  (e.g. "acme" for acme.cloudflareaccess.com)
+  //   CF_ACCESS_AUD          (Application Audience tag from the Access app)
+  //
+  // Removed in Phase 2 once Cloudflare Access replaces the Google leg:
+  //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, COOKIE_ENCRYPTION_KEY
 }

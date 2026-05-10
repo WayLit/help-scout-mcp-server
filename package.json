@@ -1,7 +1,7 @@
 {
   "name": "@waylit/helpscout-mcp",
   "version": "1.7.1",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.0.9",
   "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
   "keywords": [
     "claude-code-plugin",
@@ -78,7 +78,10 @@
     "mcpb:build": "node scripts/build-mcpb.js",
     "mcpb:pack": "npm run mcpb:build && cd helpscout-mcp-extension && npx @anthropic-ai/mcpb pack",
     "build:all": "npm run build && npm run mcpb:build",
-    "sync:plugin": "rm -rf plugins/helpscout-navigator && git clone --depth 1 https://github.com/drewburchfield/helpscout-navigator.git plugins/helpscout-navigator && rm -rf plugins/helpscout-navigator/.git"
+    "sync:plugin": "rm -rf plugins/helpscout-navigator && git clone --depth 1 https://github.com/drewburchfield/helpscout-navigator.git plugins/helpscout-navigator && rm -rf plugins/helpscout-navigator/.git",
+    "worker:dev": "pnpm --filter helpscout-mcp-worker dev",
+    "worker:deploy": "pnpm --filter helpscout-mcp-worker deploy",
+    "worker:type-check": "pnpm --filter helpscout-mcp-worker type-check"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",

@@ -45,3 +45,12 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Worker type check
+        run: pnpm --filter helpscout-mcp-worker type-check
+
+      - name: Worker tests
+        run: pnpm --filter helpscout-mcp-worker test
+
+      - name: Worker deploy dry run
+        run: pnpm --filter helpscout-mcp-worker exec wrangler deploy --dry-run
+

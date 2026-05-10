@@ -17,6 +17,13 @@ import {
   PaginatedResponse,
   isHelpScoutApiError,
 } from "./helpscout-api";
+import { logger, newRequestId } from "./logger";
+import {
+  redactAddressFields,
+  redactCustomerFields,
+  redactText,
+  redactThreadBodies,
+} from "./redaction";
 import {
   AdvancedConversationSearchShape,
   ComprehensiveConversationSearchShape,
@@ -53,8 +60,21 @@ function textResult(payload: unknown): CallToolResult {
   };
 }
 
-function errorResult(error: unknown, toolName: string): CallToolResult {
+function errorResult(
+  error: unknown,
+  toolName: string,
+  email?: string,
+): CallToolResult {
+  const requestId = newRequestId();
   if (isHelpScoutApiError(error)) {
+    logger.warn("tool: HS API error", {
+      requestId,
+      email,
+      toolName,
+      errorCode: error.code,
+      status: error.status,
+      message: error.message,
+    });
     return {
       content: [
         {
@@ -66,6 +86,7 @@ function errorResult(error: unknown, toolName: string): CallToolResult {
               status: error.status,
               retryAfter: error.retryAfter,
               tool: toolName,
+              requestId,
             },
             null,
             2,
@@ -75,6 +96,13 @@ function errorResult(error: unknown, toolName: string): CallToolResult {
       isError: true,
     };
   }
+  logger.error("tool: unexpected error", {
+    requestId,
+    email,
+    toolName,
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
   return {
     content: [
       {
@@ -84,6 +112,7 @@ function errorResult(error: unknown, toolName: string): CallToolResult {
             error: "UNEXPECTED_ERROR",
             message: error instanceof Error ? error.message : String(error),
             tool: toolName,
+            requestId,
           },
           null,
           2,
@@ -212,7 +241,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
               : 'No inboxes matched. Try "" to list all.',
         });
       } catch (err) {
-        return errorResult(err, "searchInboxes");
+        return errorResult(err, "searchInboxes", api.userEmail);
       }
     },
   );
@@ -387,7 +416,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           },
         });
       } catch (err) {
-        return errorResult(err, "searchConversations");
+        return errorResult(err, "searchConversations", api.userEmail);
       }
     },
   );
@@ -419,7 +448,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         return textResult({
           conversation: {
             id: conversation.id,
-            subject: conversation.subject,
+            subject: await redactText(conversation.subject),
             status: conversation.status,
             createdAt: conversation.createdAt,
             updatedAt: conversation.updatedAt,
@@ -430,7 +459,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           firstCustomerMessage: firstCustomerMessage
             ? {
                 id: firstCustomerMessage.id,
-                body: firstCustomerMessage.body,
+                body: await redactText(firstCustomerMessage.body),
                 createdAt: firstCustomerMessage.createdAt,
                 customer: firstCustomerMessage.customer,
               }
@@ -438,14 +467,14 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           latestStaffReply: latestStaffReply
             ? {
                 id: latestStaffReply.id,
-                body: latestStaffReply.body,
+                body: await redactText(latestStaffReply.body),
                 createdAt: latestStaffReply.createdAt,
                 createdBy: latestStaffReply.createdBy,
               }
             : null,
         });
       } catch (err) {
-        return errorResult(err, "getConversationSummary");
+        return errorResult(err, "getConversationSummary", api.userEmail);
       }
     },
   );
@@ -461,14 +490,15 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           `/conversations/${input.conversationId}/threads`,
           { page: 1, size: input.limit },
         );
+        const threads = await redactThreadBodies(response._embedded?.threads ?? []);
         return textResult({
           conversationId: input.conversationId,
-          threads: response._embedded?.threads || [],
+          threads,
           pagination: response.page,
           nextCursor: response._links?.next?.href,
         });
       } catch (err) {
-        return errorResult(err, "getThreads");
+        return errorResult(err, "getThreads", api.userEmail);
       }
     },
   );
@@ -512,7 +542,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             'Use the "id" field from these results with conversation search tools.',
         });
       } catch (err) {
-        return errorResult(err, "listAllInboxes");
+        return errorResult(err, "listAllInboxes", api.userEmail);
       }
     },
   );
@@ -600,7 +630,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             : undefined,
         });
       } catch (err) {
-        return errorResult(err, "advancedConversationSearch");
+        return errorResult(err, "advancedConversationSearch", api.userEmail);
       }
     },
   );
@@ -707,7 +737,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           resultsByStatus: allResults,
         });
       } catch (err) {
-        return errorResult(err, "comprehensiveConversationSearch");
+        return errorResult(err, "comprehensiveConversationSearch", api.userEmail);
       }
     },
   );
@@ -793,7 +823,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             : undefined,
         });
       } catch (err) {
-        return errorResult(err, "structuredConversationFilter");
+        return errorResult(err, "structuredConversationFilter", api.userEmail);
       }
     },
   );
@@ -832,8 +862,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           }
         }
 
-        const result: Record<string, unknown> = { ...customer };
-        if (address) result.address = address;
+        const redactedCustomer = redactCustomerFields(customer);
+        const result: Record<string, unknown> = { ...redactedCustomer };
+        if (address) result.address = redactAddressFields(address);
         if (addressNote) result.addressNote = addressNote;
 
         return textResult({
@@ -842,7 +873,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             "NEXT STEPS: Use organizationId with getOrganization. Use customer.id with structuredConversationFilter(customerIds).",
         });
       } catch (err) {
-        return errorResult(err, "getCustomer");
+        return errorResult(err, "getCustomer", api.userEmail);
       }
     },
   );
@@ -889,7 +920,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             "Use customer.id with getCustomer for full profile or structuredConversationFilter(customerIds).",
         });
       } catch (err) {
-        return errorResult(err, "listCustomers");
+        return errorResult(err, "listCustomers", api.userEmail);
       }
     },
   );
@@ -937,7 +968,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             "v3 API uses cursor-based pagination. Pass nextCursor back as cursor for more results.",
         });
       } catch (err) {
-        return errorResult(err, "searchCustomersByEmail");
+        return errorResult(err, "searchCustomersByEmail", api.userEmail);
       }
     },
   );
@@ -1021,7 +1052,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             "Returns all contact channels for a customer. Use getCustomer for full profile.",
         });
       } catch (err) {
-        return errorResult(err, "getCustomerContacts");
+        return errorResult(err, "getCustomerContacts", api.userEmail);
       }
     },
   );
@@ -1046,7 +1077,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             "NEXT STEPS: getOrganizationMembers for customers, getOrganizationConversations for support history.",
         });
       } catch (err) {
-        return errorResult(err, "getOrganization");
+        return errorResult(err, "getOrganization", api.userEmail);
       }
     },
   );
@@ -1075,7 +1106,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             "Use organization.id with getOrganization, getOrganizationMembers, or getOrganizationConversations.",
         });
       } catch (err) {
-        return errorResult(err, "listOrganizations");
+        return errorResult(err, "listOrganizations", api.userEmail);
       }
     },
   );
@@ -1105,7 +1136,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             "Use customer.id with getCustomer or structuredConversationFilter(customerIds).",
         });
       } catch (err) {
-        return errorResult(err, "getOrganizationMembers");
+        return errorResult(err, "getOrganizationMembers", api.userEmail);
       }
     },
   );
@@ -1145,7 +1176,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           usage: "Use conversation.id with getThreads or getConversationSummary.",
         });
       } catch (err) {
-        return errorResult(err, "getOrganizationConversations");
+        return errorResult(err, "getOrganizationConversations", api.userEmail);
       }
     },
   );

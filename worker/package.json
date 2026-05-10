@@ -5,18 +5,22 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.4.0",
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "agents": "^0.9.0",
     "hono": "^4.7.10",
+    "jose": "^5.9.6",
+    "openredaction": "^1.1.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
     "typescript": "^5.8.3",
+    "vitest": "^2.1.9",
     "wrangler": "^4.14.0"
   }
 }

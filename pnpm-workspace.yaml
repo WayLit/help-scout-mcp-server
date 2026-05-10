@@ -1,3 +1,6 @@
+packages:
+  - .
+  - worker
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - preact@10.28.2

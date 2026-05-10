@@ -1,0 +1,87 @@
+name: Security audit
+
+# Runs `pnpm audit` daily across the workspace. Fails (and emails the repo
+# admin via GitHub's failed-workflow notification) when an unfixed high or
+# critical advisory exists.
+#
+# This is the "fail and notify" backstop for advisories that Renovate can't
+# auto-PR yet because of the 3-day `minimumReleaseAge` gate in
+# `pnpm-workspace.yaml`. Renovate still raises a PR once the fix is old
+# enough; this workflow makes sure the gap is visible in the meantime.
+
+on:
+  schedule:
+    # 06:17 UTC daily — odd minute to dodge the top-of-hour scheduler stampede.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "**/package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/security-audit.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit (high/critical only)
+        id: audit
+        # `pnpm audit` exits non-zero if anything matches the audit-level filter.
+        # Capture the JSON regardless so we can attach it to a GitHub issue.
+        run: |
+          set +e
+          pnpm audit --audit-level=high --json > audit.json
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -ne 0 ]; then
+            echo "::error title=Security audit failed::High or critical advisories found. See audit.json artifact and issue."
+          fi
+          exit 0
+
+      - name: Upload audit JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-audit
+          path: audit.json
+          retention-days: 30
+
+      - name: Open or update tracking issue on failure
+        if: steps.audit.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_TITLE: "Security audit: high/critical advisories detected"
+          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          body=$(printf '`pnpm audit --audit-level=high` failed in run %s.\n\nMost recent audit JSON is attached to the workflow run as the `pnpm-audit` artifact.\n\nIf Renovate has not raised a PR for the fix yet, the upgrade is likely waiting on the 3-day `minimumReleaseAge` gate in `pnpm-workspace.yaml`. Add the offending package version to `minimumReleaseAgeExclude` to land it sooner, or wait it out.\n' "$RUN_URL")
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "dependencies,security" --body "$body"
+          fi
+
+      - name: Fail the workflow
+        if: steps.audit.outputs.status != '0'
+        run: exit 1

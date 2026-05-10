@@ -1,16 +1,27 @@
 # Copy this file to .dev.vars and fill in real values for local dev.
 # In production, set these via: wrangler secret put <NAME>
 
-# Google OAuth (https://console.cloud.google.com/apis/credentials)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-# Optional: restrict login to a single Google Workspace domain, e.g. "example.com"
-# GOOGLE_HOSTED_DOMAIN=
-
 # Help Scout OAuth App (https://secure.helpscout.net/users/apps)
 # Redirect URI must be: https://<your-worker>.workers.dev/callback/helpscout
+# (or http://localhost:8788/callback/helpscout for local dev)
 HELPSCOUT_APP_ID=
 HELPSCOUT_APP_SECRET=
 
-# Random secret for signing cookies. Generate with: openssl rand -hex 32
-COOKIE_ENCRYPTION_KEY=
+# Cloudflare Access (production identity)
+# Team subdomain — for acme.cloudflareaccess.com this is "acme"
+CF_ACCESS_TEAM_DOMAIN=
+# Application Audience tag — copy from the Access app overview
+CF_ACCESS_AUD=
+
+# MCP client redirect_uri allowlist (comma-separated host patterns).
+# Loopback (localhost / 127.0.0.1) is always allowed — only set this when
+# remote browser clients (claude.ai, etc.) need to authorize against this
+# worker. Supports exact host (`claude.ai`) and wildcard subdomain
+# (`*.claude.ai`). Without this, a deployment fails closed for non-loopback
+# redirects, which is the safe default behind dynamic client registration.
+# OAUTH_ALLOWED_REDIRECT_HOSTS=claude.ai,*.claude.ai
+
+# Local-dev escape hatch. Skips Access JWT verification when both are set.
+# REFUSED at startup outside `wrangler dev`.
+# BYPASS_ACCESS=true
+# WRANGLER_DEV=true
