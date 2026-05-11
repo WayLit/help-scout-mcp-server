@@ -2,6 +2,8 @@
 
 Remote MCP server that fronts the Help Scout API for AI assistants. Per-user OAuth, Cloudflare Access for employee identity, Durable Object per session.
 
+> **Deploying for the first time?** See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for an end-to-end checklist.
+
 This package is a pnpm workspace member. Run all commands from the repo root unless noted.
 
 ```bash
@@ -26,21 +28,21 @@ Paste the returned IDs into `wrangler.jsonc` (`id` and `preview_id`).
 
 ### 2. Cloudflare Access in front of the worker
 
-Cloudflare Access handles employee identity. The worker only sees authenticated, JWT-signed requests. The production hostname for this deployment is **`helpscout-mcp.waylit.ai`** (configured via `routes` in `wrangler.jsonc`).
+Cloudflare Access handles employee identity. The worker only sees authenticated, JWT-signed requests. Pick a hostname for your deployment (e.g. `helpscout-mcp.example.com`) and set it as the `routes` pattern in `wrangler.jsonc`. The rest of this section uses `<YOUR_HOSTNAME>` to mean that value.
 
 1. **Configure Google Workspace as an IdP** in Cloudflare Zero Trust → Settings → Authentication → Login methods → Add new → Google Workspace. Follow the connector wizard (one-time admin consent in Workspace).
 2. **Create a Self-hosted Access application** for the worker:
-   - Application domain: `helpscout-mcp.waylit.ai`
+   - Application domain: `<YOUR_HOSTNAME>`
    - Identity providers: Google Workspace
-   - Policy: `Allow` if `Emails ending in @waylit.ai` (or whichever domain owns the Workspace tenant)
+   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>`
 3. **For headless MCP clients** (Claude Code, Cursor, etc.) create a **service token** under Access → Service Auth and attach a second `Allow` policy that matches `Service Token` = the token's name. Distribute the `Client ID` + `Client Secret` to users; they configure them as `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers in the MCP client.
 4. **Capture two values** for worker secrets:
-   - `CF_ACCESS_TEAM_DOMAIN` — your team subdomain, e.g. `waylit` for `waylit.cloudflareaccess.com`
+   - `CF_ACCESS_TEAM_DOMAIN` — your team subdomain, e.g. `acme` for `acme.cloudflareaccess.com`
    - `CF_ACCESS_AUD` — the Application Audience (AUD) tag from the Access app overview page
 
 ### 3. Help Scout OAuth app
 
-Create at https://secure.helpscout.net/users/apps. Required redirect URI: `https://helpscout-mcp.waylit.ai/callback/helpscout`. Grab the App ID and App Secret.
+Create at https://secure.helpscout.net/users/apps. Required redirect URI: `https://<YOUR_HOSTNAME>/callback/helpscout`. Grab the App ID and App Secret.
 
 ### 4. Set worker secrets
 
@@ -65,11 +67,13 @@ Without this, non-loopback redirects are rejected — that's the safe default gi
 
 ### 5. Deploy
 
+By default the worker deploys to `helpscout-mcp.<account>.workers.dev`:
+
 ```bash
 pnpm --filter helpscout-mcp-worker deploy
 ```
 
-If using a custom domain, configure the route in `wrangler.jsonc` and re-deploy.
+To deploy under a custom domain, see [Custom domain](#custom-domain) below.
 
 ## Local development
 
@@ -145,9 +149,23 @@ If the `AUDIT_DB` binding is absent, audit logging is a silent no-op. `args_hash
 
 ## Custom domain
 
-This worker deploys to **`helpscout-mcp.waylit.ai`** (declared as a `custom_domain` route in `wrangler.jsonc`). Wrangler provisions the DNS record on first `deploy` provided `waylit.ai` is a Cloudflare-managed zone on the same account. If you need a different subdomain, edit the `routes` block in `wrangler.jsonc` and update the redirect URI in the Help Scout app + the Application domain in the Cloudflare Access app to match.
+The committed `wrangler.jsonc` has no `routes` block, so `wrangler deploy` puts the worker on `*.workers.dev`. To deploy under your own hostname, use an override config file (gitignored — your hostname stays out of the repo):
 
-If you ever fall back to `*.workers.dev` for testing, keep in mind that both the HS redirect URI and the Access application domain need to match — change all three together.
+```bash
+cd worker
+cp wrangler.custom.jsonc.example wrangler.custom.jsonc
+# edit wrangler.custom.jsonc — set "routes" pattern + paste your KV namespace IDs
+wrangler deploy --config wrangler.custom.jsonc
+```
+
+Wrangler's `--config` flag replaces (does not merge with) the default config, so `wrangler.custom.jsonc` is a complete worker config. If you later change the base `wrangler.jsonc` (e.g. new bindings, compatibility flags), copy those changes into your override too.
+
+The hostname's zone must be a Cloudflare-managed zone on the same account before deploy; `custom_domain: true` provisions DNS automatically.
+
+When changing hostname, three things have to point at the same place:
+1. The `routes` pattern in `wrangler.custom.jsonc`
+2. The Help Scout redirect URI: `https://<your-hostname>/callback/helpscout`
+3. The Cloudflare Access Application domain
 
 ## What's not in this worker
 

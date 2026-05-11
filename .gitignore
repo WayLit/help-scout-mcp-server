@@ -96,6 +96,7 @@ scripts/*.state.json
 
 # Worker dev secrets & build artifacts
 worker/.dev.vars
+worker/wrangler.custom.jsonc
 worker/node_modules/
 worker/.wrangler/
 worker/dist/

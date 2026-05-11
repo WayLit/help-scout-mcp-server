@@ -24,12 +24,11 @@
     { "tag": "v1", "new_sqlite_classes": ["HelpScoutMCP"] }
   ],
   "observability": { "enabled": true },
-  "dev": { "port": 8788 },
-  // Custom domain. waylit.ai must be a Cloudflare-managed zone in this account
-  // before deploy. `custom_domain: true` provisions DNS automatically.
-  "routes": [
-    { "pattern": "helpscout-mcp.waylit.ai", "custom_domain": true }
-  ]
+  "dev": { "port": 8788 }
+  // No `routes` here — by default this worker deploys to `*.workers.dev`.
+  // To use a custom domain, copy `wrangler.custom.jsonc.example` →
+  // `wrangler.custom.jsonc` (gitignored), edit it, and deploy with:
+  //   wrangler deploy --config wrangler.custom.jsonc
   // Secrets (set via `wrangler secret put <NAME>`):
   //   HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET
   //   CF_ACCESS_TEAM_DOMAIN  (e.g. "acme" for acme.cloudflareaccess.com)

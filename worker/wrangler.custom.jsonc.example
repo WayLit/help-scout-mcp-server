@@ -1,0 +1,32 @@
+// Copy this file to `wrangler.custom.jsonc` (gitignored), fill in your hostname
+// and KV IDs, then deploy with:
+//   wrangler deploy --config wrangler.custom.jsonc
+//
+// `--config` replaces (does not merge with) the default `wrangler.jsonc`, so
+// this file must be a complete worker config. Keep it in sync if you upgrade
+// the base config in `wrangler.jsonc`.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "helpscout-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID",
+      "preview_id": "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "MCP_OBJECT", "class_name": "HelpScoutMCP" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HelpScoutMCP"] }],
+  "observability": { "enabled": true },
+  "dev": { "port": 8788 },
+  // The hostname's zone must be a Cloudflare-managed zone on this account
+  // before deploy. `custom_domain: true` provisions DNS automatically.
+  "routes": [
+    { "pattern": "helpscout-mcp.example.com", "custom_domain": true }
+  ]
+}
