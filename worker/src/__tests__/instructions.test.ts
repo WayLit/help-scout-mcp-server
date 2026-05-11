@@ -1,0 +1,37 @@
+import { describe, expect, it } from "vitest";
+
+import { buildInstructions } from "../instructions";
+
+describe("buildInstructions", () => {
+  it("renders the empty-state hint when no inboxes are passed", () => {
+    const out = buildInstructions([]);
+    expect(out).toContain("## Available Inboxes (0 total)");
+    expect(out).toContain("(No inboxes discovered yet — call searchInboxes once tokens are available)");
+  });
+
+  it("lists each inbox as a `\"name\" (ID: id)` bullet", () => {
+    const out = buildInstructions([
+      { id: 1, name: "Support" },
+      { id: 42, name: "Billing" },
+    ]);
+    expect(out).toContain("## Available Inboxes (2 total)");
+    expect(out).toContain('  - "Support" (ID: 1)');
+    expect(out).toContain('  - "Billing" (ID: 42)');
+    expect(out).not.toContain("No inboxes discovered yet");
+  });
+
+  it("includes the tool-selection guide so clients pick the right tool", () => {
+    const out = buildInstructions([]);
+    expect(out).toContain("## Tool Selection Guide");
+    expect(out).toContain("comprehensiveConversationSearch");
+    expect(out).toContain("searchConversations");
+    expect(out).toContain("getThreads");
+  });
+
+  it("documents the workflow patterns and PII redaction default", () => {
+    const out = buildInstructions([]);
+    expect(out).toContain("## Workflow Patterns");
+    expect(out).toContain("PII redaction is enabled by default");
+    expect(out).toContain("REDACT_PII=false");
+  });
+});

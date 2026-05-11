@@ -17,6 +17,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { AuthHandler } from "./auth-handler";
 import { instrumentServerForAudit } from "./audit";
 import { HelpScoutAPI } from "./helpscout-api";
+import { buildInstructions } from "./instructions";
 import { logger } from "./logger";
 import { registerPrompts } from "./prompts";
 import { configureRedaction } from "./redaction";
@@ -26,53 +27,6 @@ import type { Env, HelpScoutTokenRecord, Props } from "./types";
 import { HS_TOKENS_STORAGE_KEY } from "./types";
 
 const HELPSCOUT_TOKEN_URL = "https://api.helpscout.net/v2/oauth2/token";
-
-/**
- * Build the MCP `instructions` string injected into the initialize handshake.
- * Mirrors stdio's discoverAndBuildInstructions but per-user (the worker is
- * one DO instance per email, so each user gets their own scoped list).
- */
-function buildInstructions(inboxes: Array<{ id: number; name: string }>): string {
-  const inboxList =
-    inboxes.length > 0
-      ? inboxes.map((i) => `  - "${i.name}" (ID: ${i.id})`).join("\n")
-      : "  (No inboxes discovered yet — call searchInboxes once tokens are available)";
-
-  return `Help Scout MCP Server - Search and retrieve Help Scout inbox, conversation, customer, and organization data.
-
-## Available Inboxes (${inboxes.length} total)
-${inboxList}
-
-## Tool Selection Guide
-| Task | Tool |
-|------|------|
-| Find tickets by keyword (billing, refund, bug) | comprehensiveConversationSearch |
-| List recent/filtered tickets | searchConversations |
-| Complex filters (email domain, multiple tags) | advancedConversationSearch |
-| Lookup by ticket number (#12345) | structuredConversationFilter |
-| Browse customers by name or query | listCustomers |
-| Find a customer by email | searchCustomersByEmail |
-| Get a full customer profile | getCustomer |
-| Get customer contact channels | getCustomerContacts |
-| Browse organizations | listOrganizations |
-| Get an organization profile | getOrganization |
-| See everyone in an organization | getOrganizationMembers |
-| See all conversations for an organization | getOrganizationConversations |
-| Get full conversation thread | getThreads |
-| Quick conversation preview | getConversationSummary |
-
-## Workflow Patterns
-- **Ticket investigation**: searchConversations → getConversationSummary → getThreads
-- **Keyword research**: comprehensiveConversationSearch → getThreads for details
-- **Customer history**: searchCustomersByEmail → getCustomer → structuredConversationFilter/getThreads
-- **Account review**: listOrganizations/getOrganization → getOrganizationMembers → getOrganizationConversations
-
-## Notes
-- Always use inbox IDs from the list above (not names)
-- All search tools default to active+pending+closed statuses
-- Use getServerTime for date-relative queries
-- PII redaction is enabled by default (set REDACT_PII=false to disable)`;
-}
 
 export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
   server = new McpServer({
