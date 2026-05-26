@@ -87,7 +87,7 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "axios": "^1.14.0",
     "dotenv": "^17.4.2",
-    "lru-cache": "^10.4.3",
+    "lru-cache": "^11.5.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
