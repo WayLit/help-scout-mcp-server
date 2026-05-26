@@ -1,5 +1,5 @@
 # Use Node.js 20 LTS as base image
-FROM node:20-alpine AS builder
+FROM node:20.20.2-alpine AS builder
 
 # Set working directory
 WORKDIR /app
@@ -19,7 +19,7 @@ COPY mcp.json ./
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine AS production
+FROM node:20.20.2-alpine AS production
 
 # Create app user for security
 RUN addgroup -g 1001 -S nodejs && \
