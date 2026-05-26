@@ -24,7 +24,13 @@
     { "tag": "v1", "new_sqlite_classes": ["HelpScoutMCP"] }
   ],
   "observability": { "enabled": true },
-  "dev": { "port": 8788 }
+  "dev": { "port": 8788 },
+  // Polyfill node:module so packages that call createRequire(import.meta.url)
+  // as a CJS shim (e.g. openredaction) don't blow up at Workers validation
+  // time. The shim is never actually invoked at runtime.
+  "alias": {
+    "node:module": "./src/polyfills/node-module.ts"
+  }
   // No `routes` here — by default this worker deploys to `*.workers.dev`.
   // To use a custom domain, copy `wrangler.custom.jsonc.example` →
   // `wrangler.custom.jsonc` (gitignored), edit it, and deploy with:
