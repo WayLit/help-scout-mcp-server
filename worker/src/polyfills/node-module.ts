@@ -16,7 +16,7 @@ export function createRequire(_filename: string | URL): NodeRequire {
   } as unknown as NodeRequire;
   req.resolve = (() => {
     throw new Error("Not supported");
-  }) as NodeRequire["resolve"];
+  }) as unknown as NodeRequire["resolve"];
   req.resolve.paths = () => null;
   req.cache = {};
   req.extensions = {} as NodeRequire["extensions"];

@@ -65,23 +65,6 @@ jobs:
           path: audit.json
           retention-days: 30
 
-      - name: Open or update tracking issue on failure
-        if: steps.audit.outputs.status != '0'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_TITLE: "Security audit: high/critical advisories detected"
-          RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        run: |
-          set -euo pipefail
-          existing=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
-          body=$(printf '`pnpm audit --audit-level=high` failed in run %s.\n\nMost recent audit JSON is attached to the workflow run as the `pnpm-audit` artifact.\n\nIf Renovate has not raised a PR for the fix yet, the upgrade is likely waiting on the 3-day `minimumReleaseAge` gate in `pnpm-workspace.yaml`. Add the offending package version to `minimumReleaseAgeExclude` to land it sooner, or wait it out.\n' "$RUN_URL")
-
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body "$body"
-          else
-            gh issue create --title "$ISSUE_TITLE" --label "dependencies,security" --body "$body"
-          fi
-
       - name: Fail the workflow
         if: steps.audit.outputs.status != '0'
         run: exit 1
