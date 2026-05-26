@@ -1,7 +1,7 @@
 {
   "name": "@waylit/helpscout-mcp",
   "version": "1.7.1",
-  "packageManager": "pnpm@11.0.9",
+  "packageManager": "pnpm@11.2.2",
   "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
   "keywords": [
     "claude-code-plugin",
@@ -84,27 +84,27 @@
     "worker:type-check": "pnpm --filter helpscout-mcp-worker type-check"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.27.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "axios": "^1.14.0",
-    "dotenv": "^17.4.0",
+    "dotenv": "^17.4.2",
     "lru-cache": "^10.4.3",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@anthropic-ai/mcpb": "2.0.1",
+    "@anthropic-ai/mcpb": "2.1.2",
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.5.2",
-    "jest": "^30.3.0",
-    "nock": "^14.0.11",
-    "oxfmt": "^0.43.0",
-    "oxlint": "^1.58.0",
+    "@types/node": "^25.9.1",
+    "jest": "^30.4.2",
+    "nock": "^14.0.15",
+    "oxfmt": "^0.51.0",
+    "oxlint": "^1.66.0",
     "rimraf": "^5.0.10",
-    "ts-jest": "^29.4.9",
-    "tsx": "^4.21.0",
+    "ts-jest": "^29.4.11",
+    "tsx": "^4.22.3",
     "typescript": "^5.9.3"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.16.0"
   },
   "mcpName": "io.github.waylit/helpscout-mcp"
 }
