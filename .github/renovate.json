@@ -33,6 +33,7 @@
   "vulnerabilityAlerts": {
     "labels": ["dependencies", "security"],
     "schedule": ["at any time"],
+    "groupName": "security updates",
     "automerge": true,
     "platformAutomerge": true
   }
