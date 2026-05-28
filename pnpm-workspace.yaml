@@ -9,9 +9,11 @@ minimumReleaseAgeExclude:
   - hono@4.12.18
   # Renovate security update: axios@1.15.2
   - axios@1.15.2
+  # Renovate security update: tmp@<=0.2.3@0.2.7
+  - tmp@<=0.2.3@0.2.7
 overrides:
   '@hono/node-server@<1.19.13': '>=1.19.14'
-  tmp@<=0.2.3: '>=0.2.5'
+  tmp@<=0.2.3: '>=0.2.7'
   hono@<4.12.12: '>=4.12.12'
 allowBuilds:
   core-js-pure: false
