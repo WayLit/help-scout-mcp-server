@@ -1,7 +1,7 @@
 {
   "name": "@waylit/helpscout-mcp",
   "version": "1.7.1",
-  "packageManager": "pnpm@11.2.2",
+  "packageManager": "pnpm@11.3.0",
   "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
   "keywords": [
     "claude-code-plugin",

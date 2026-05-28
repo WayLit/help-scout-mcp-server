@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "helpscout-mcp",
   "main": "src/index.ts",
-  "compatibility_date": "2025-04-10",
+  "compatibility_date": "2026-05-25",
   "compatibility_flags": ["nodejs_compat"],
   // OAUTH_KV stores transient OAuth state (10-minute TTL).
   // Help Scout per-user tokens live in DO storage on HelpScoutMCP, not here.
@@ -11,8 +11,8 @@
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
-      "id": "REPLACE_WITH_KV_NAMESPACE_ID",
-      "preview_id": "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+      "id": "332e974fbe31423d8bfa7e87e6fb5b1a",
+      "preview_id": "8dcfe0bf18b046bbac289d71b7449acb"
     }
   ],
   "durable_objects": {
@@ -30,7 +30,10 @@
   // time. The shim is never actually invoked at runtime.
   "alias": {
     "node:module": "./src/polyfills/node-module.ts"
-  }
+  },
+  "routes": [
+    { "pattern": "helpscout-mcp.waylit.ai", "custom_domain": true }
+  ]
   // No `routes` here — by default this worker deploys to `*.workers.dev`.
   // To use a custom domain, copy `wrangler.custom.jsonc.example` →
   // `wrangler.custom.jsonc` (gitignored), edit it, and deploy with:
