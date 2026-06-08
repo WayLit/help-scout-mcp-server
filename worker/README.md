@@ -26,19 +26,22 @@ wrangler kv namespace create OAUTH_KV --preview
 
 Paste the returned IDs into `wrangler.jsonc` (`id` and `preview_id`).
 
-### 2. Cloudflare Access in front of the worker
+### 2. Cloudflare Access on the `/authorize` endpoint
 
-Cloudflare Access handles employee identity. The worker only sees authenticated, JWT-signed requests. Pick a hostname for your deployment (e.g. `helpscout-mcp.example.com`) and set it as the `routes` pattern in `wrangler.jsonc`. The rest of this section uses `<YOUR_HOSTNAME>` to mean that value.
+Cloudflare Access handles employee identity. Scope it to the worker's **`/authorize` endpoint only** — that's the one browser-interactive step where the worker reads the verified email from the Access JWT. The MCP endpoints (`/mcp`, `/token`) are left un-fronted because they're protected by the OAuth bearer token the worker issues *after* `/authorize`, and `/callback/helpscout` is guarded by its one-time OAuth state token. Scoping to `/authorize` is what lets MCP clients log in through an ordinary browser flow instead of carrying a pre-shared service token.
+
+Pick a hostname for your deployment (e.g. `helpscout-mcp.example.com`) and set it as the `routes` pattern in `wrangler.jsonc`. The rest of this section uses `<YOUR_HOSTNAME>` to mean that value.
 
 1. **Configure Google Workspace as an IdP** in Cloudflare Zero Trust → Settings → Authentication → Login methods → Add new → Google Workspace. Follow the connector wizard (one-time admin consent in Workspace).
-2. **Create a Self-hosted Access application** for the worker:
-   - Application domain: `<YOUR_HOSTNAME>`
+2. **Create a Self-hosted Access application** scoped to the authorize path:
+   - Application domain / path: `<YOUR_HOSTNAME>/authorize`
    - Identity providers: Google Workspace
-   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>`
-3. **For headless MCP clients** (Claude Code, Cursor, etc.) create a **service token** under Access → Service Auth and attach a second `Allow` policy that matches `Service Token` = the token's name. Distribute the `Client ID` + `Client Secret` to users; they configure them as `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers in the MCP client.
-4. **Capture two values** for worker secrets:
+   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>` — this is your perimeter, still enforced on every login since identity only enters through `/authorize`
+3. **Capture two values** for worker secrets:
    - `CF_ACCESS_TEAM_DOMAIN` — your team subdomain, e.g. `acme` for `acme.cloudflareaccess.com`
    - `CF_ACCESS_AUD` — the Application Audience (AUD) tag from the Access app overview page
+
+> No service token is needed. Clients connect with no `CF-Access-*` headers; the browser OAuth flow carries identity. Verify after deploy: `curl -i https://<YOUR_HOSTNAME>/mcp` should return a 401 bearer challenge from the worker, **not** a Cloudflare Access login page (which would mean the app is still fronting the whole host).
 
 ### 3. Help Scout OAuth app
 
@@ -102,12 +105,12 @@ The Help Scout OAuth flow needs the redirect URI to be reachable. For local test
 See `../CLAUDE.md` (`### Remote MCP (worker/)`) for the architecture overview. The short version:
 
 - **Entry**: `src/index.ts` — `OAuthProvider` wrapping the `HelpScoutMCP` Durable Object.
-- **Auth**: Cloudflare Access verifies identity → JWT in `Cf-Access-Jwt-Assertion` → worker extracts email → user's DO holds their HS tokens. Help Scout authorization-code flow runs once per user (and re-runs on `invalid_grant`).
+- **Auth**: Cloudflare Access (scoped to `/authorize`) verifies identity → JWT in `Cf-Access-Jwt-Assertion` → worker extracts email and completes the OAuth grant. The MCP client then holds a worker-issued bearer token for `/mcp` and `/token`. Help Scout authorization-code flow runs once per user (and re-runs on `invalid_grant`); each user's DO holds their HS tokens.
 - **Per-user isolation**: each user's HS tokens, cache, and inbox-discovery results live in their own Durable Object instance, keyed by email. No shared credentials.
 
 ## Troubleshooting
 
-**"401 from Cloudflare Access" before the worker is even hit.** The Access app is misconfigured or the user isn't in the policy. Check Zero Trust → Logs → Access.
+**"401 from Cloudflare Access" during the browser login at `/authorize`.** The Access app is misconfigured or the user isn't in the policy. Check Zero Trust → Logs → Access.
 
 **"invalid_grant" loops.** A user's Help Scout refresh token was revoked (HS app reinstalled, user removed, etc.). The worker should detect this and force re-consent automatically; if it doesn't, manually delete the user's DO storage:
 ```bash
@@ -117,7 +120,7 @@ wrangler durable-objects namespace ids MCP_OBJECT
 
 **Tool call returns `UNAUTHORIZED`.** Token storage is missing or corrupt. Forces a re-auth on the MCP client's next call.
 
-**Service-token auth fails.** Verify the headers are exactly `CF-Access-Client-Id` / `CF-Access-Client-Secret` and that the service token policy is attached to the same Access app.
+**`curl /mcp` returns a Cloudflare Access login page instead of a 401 bearer challenge.** The Access app is fronting the whole hostname. Scope it to the `/authorize` path only, so the bearer-protected `/mcp` and `/token` endpoints stay reachable. Conversely, if the browser never prompts for Access during connect, the `/authorize` path isn't covered by any Access app — identity isn't being enforced.
 
 ## Optional: audit log (D1)
 
@@ -165,7 +168,7 @@ The hostname's zone must be a Cloudflare-managed zone on the same account before
 When changing hostname, three things have to point at the same place:
 1. The `routes` pattern in `wrangler.custom.jsonc`
 2. The Help Scout redirect URI: `https://<your-hostname>/callback/helpscout`
-3. The Cloudflare Access Application domain
+3. The Cloudflare Access application domain/path: `https://<your-hostname>/authorize`
 
 ## What's not in this worker
 
