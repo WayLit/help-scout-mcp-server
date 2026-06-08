@@ -54,7 +54,7 @@ Use \`advancedConversationSearch\` when:
 
 ## Status Handling
 
-Both \`searchConversations\` and \`comprehensiveConversationSearch\` search active+pending+closed by default. Specify \`status\` only when you want to narrow.
+\`searchConversations\` searches active+pending by default — pass \`status: "closed"\` to look in closed tickets. \`comprehensiveConversationSearch\` searches active+pending+closed by default. Specify \`status\`/\`statuses\` to narrow or to include closed.
 
 ## Pitfalls
 

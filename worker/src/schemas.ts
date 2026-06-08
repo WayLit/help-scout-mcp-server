@@ -41,6 +41,20 @@ export const GetConversationSummaryShape = {
   conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
 };
 
+export const DraftReplyShape = {
+  conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
+  historyLimit: z
+    .number()
+    .min(0)
+    .max(10)
+    .default(5)
+    .describe("How many of the customer's previous conversations to pull for context."),
+  guidance: z
+    .string()
+    .optional()
+    .describe("Optional extra instructions for the draft, e.g. tone or specific points to cover."),
+};
+
 export const AdvancedConversationSearchShape = {
   contentTerms: z.array(z.string()).optional(),
   subjectTerms: z.array(z.string()).optional(),
@@ -247,6 +261,22 @@ export interface Organization {
   brandColor?: string | null;
   customerCount?: number;
   conversationCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Help Scout user (mailbox agent), as returned by `GET /v2/users/me`. */
+export interface User {
+  id: number;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: string;
+  timezone?: string;
+  type?: string;
+  photoUrl?: string | null;
+  jobTitle?: string | null;
+  phone?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
