@@ -9,6 +9,8 @@ minimumReleaseAgeExclude:
   - hono@4.12.18
   # Renovate security update: axios@1.15.2
   - axios@1.15.2
+  # Renovate security update: vitest@3.2.6
+  - vitest@3.2.6
 overrides:
   '@hono/node-server@<1.19.13': '>=1.19.14'
   tmp@<=0.2.3: '>=0.2.5'
