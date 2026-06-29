@@ -1,7 +1,7 @@
 {
   "name": "@waylit/helpscout-mcp",
   "version": "1.7.1",
-  "packageManager": "pnpm@11.3.0",
+  "packageManager": "pnpm@11.9.0",
   "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
   "keywords": [
     "claude-code-plugin",
@@ -93,18 +93,18 @@
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.1.2",
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.4",
     "jest": "^30.4.2",
-    "nock": "^14.0.15",
-    "oxfmt": "^0.51.0",
-    "oxlint": "^1.66.0",
+    "nock": "^14.0.16",
+    "oxfmt": "^0.56.0",
+    "oxlint": "^1.71.0",
     "rimraf": "^5.0.10",
     "ts-jest": "^29.4.11",
-    "tsx": "^4.22.3",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3"
   },
   "engines": {
-    "node": ">=24.16.0"
+    "node": ">=24.18.0"
   },
   "mcpName": "io.github.waylit/helpscout-mcp"
 }
