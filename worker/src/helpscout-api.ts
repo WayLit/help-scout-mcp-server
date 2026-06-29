@@ -170,11 +170,33 @@ export class HelpScoutAPI {
     if (cached !== undefined) return cached;
 
     const url = this.buildUrl(endpoint, params);
-    const result = await this.executeWithRetry<T>(url);
+    const result = await this.executeWithRetry<T>(url, { method: "GET" });
 
     const ttl = cacheOptions?.ttl ?? this.getDefaultCacheTtlSeconds(endpoint);
     await this.setCached(cacheKey, result, ttl);
     return result;
+  }
+
+  /**
+   * PATCH a Help Scout endpoint with a JSON body. Used for writes (e.g. the
+   * conversation JSONPatch endpoint). Responses are never cached, and we
+   * invalidate any cached GET for the same endpoint so a follow-up read does
+   * not return pre-write state. `endpoint` may be a /v2-relative path or an
+   * absolute URL.
+   */
+  async patch<T = unknown>(endpoint: string, body: unknown): Promise<T> {
+    const url = this.buildUrl(endpoint);
+    const result = await this.executeWithRetry<T>(url, { method: "PATCH", body });
+    await this.invalidateEndpointCache(endpoint);
+    return result;
+  }
+
+  /** Drop every cached GET keyed to this endpoint (any param combination). */
+  private async invalidateEndpointCache(endpoint: string): Promise<void> {
+    const prefix = `cache:GET:${endpoint}:`;
+    const stale = await this.storage.list({ prefix });
+    if (stale.size === 0) return;
+    await this.storage.delete([...stale.keys()]);
   }
 
   /**
@@ -186,9 +208,15 @@ export class HelpScoutAPI {
    * arrives after a fresh token, fail with UNAUTHORIZED rather than spinning
    * the refresh loop and burning refresh tokens.
    */
-  private async executeWithRetry<T>(url: string, maxRetries = 3): Promise<T> {
+  private async executeWithRetry<T>(
+    url: string,
+    init: { method: string; body?: unknown },
+    maxRetries = 3,
+  ): Promise<T> {
     const baseDelayMs = 1_000;
     const maxDelayMs = 10_000;
+    const hasBody = init.body !== undefined;
+    const serializedBody = hasBody ? JSON.stringify(init.body) : undefined;
 
     let attempt = 0;
     let forcedRefreshAttempted = false;
@@ -196,9 +224,15 @@ export class HelpScoutAPI {
       const token = await this.fetchAccessToken(false);
       let res: Response;
       try {
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        };
+        if (hasBody) headers["Content-Type"] = "application/json";
         res = await fetch(url, {
-          method: "GET",
-          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+          method: init.method,
+          headers,
+          body: serializedBody,
           signal: AbortSignal.timeout(30_000),
         });
       } catch (err) {
