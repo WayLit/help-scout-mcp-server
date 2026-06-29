@@ -1,24 +1,10 @@
 {
-  "name": "@waylit/helpscout-mcp",
+  "name": "helpscout-mcp-worker",
   "version": "1.7.1",
+  "private": true,
+  "type": "module",
   "packageManager": "pnpm@11.9.0",
-  "description": "Search Help Scout conversations, customers, organizations, threads, and inboxes with AI assistants",
-  "keywords": [
-    "claude-code-plugin",
-    "claude-cowork",
-    "claude-desktop",
-    "customer-support",
-    "help scout",
-    "help-scout",
-    "help-scout-api",
-    "helpscout",
-    "mcp",
-    "mcp-server",
-    "model-context-protocol",
-    "modelcontextprotocol",
-    "nodejs",
-    "typescript"
-  ],
+  "description": "Remote MCP server for Help Scout, deployed as a Cloudflare Worker with per-user OAuth",
   "homepage": "https://github.com/WayLit/help-scout-mcp-server#readme",
   "bugs": {
     "url": "https://github.com/WayLit/help-scout-mcp-server/issues"
@@ -38,73 +24,35 @@
     "type": "git",
     "url": "git+https://github.com/WayLit/help-scout-mcp-server.git"
   },
-  "bin": {
-    "helpscout-mcp": "dist/index.js"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
-  "files": [
-    "dist/",
-    "mcp.json",
-    "README.md",
-    "LICENSE",
-    "claude-desktop-config.json"
-  ],
-  "type": "module",
-  "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
     "lint": "oxlint src",
     "fmt": "oxfmt --write src",
     "fmt:check": "oxfmt --check src",
-    "type-check": "tsc --noEmit",
     "security": "semgrep --config .semgrep.yml .",
-    "security:ci": "semgrep ci",
-    "test": "jest",
-    "test:mcp": "node tests/test-mcp-client.cjs",
-    "test:forensic": "node tests/test-forensic-scenarios.cjs",
-    "test:docker": "node tests/test-docker.cjs",
-    "test:docker:ci": "node tests/test-docker-ci.cjs",
-    "clean": "rimraf dist",
-    "version:patch": "node scripts/bump-version.cjs patch",
-    "version:minor": "node scripts/bump-version.cjs minor",
-    "version:major": "node scripts/bump-version.cjs major",
-    "prepublishOnly": "npm run clean && npm run build",
-    "prepack": "npm run build",
-    "mcpb:build": "node scripts/build-mcpb.js",
-    "mcpb:pack": "npm run mcpb:build && cd helpscout-mcp-extension && npx @anthropic-ai/mcpb pack",
-    "build:all": "npm run build && npm run mcpb:build",
-    "sync:plugin": "rm -rf plugins/helpscout-navigator && git clone --depth 1 https://github.com/drewburchfield/helpscout-navigator.git plugins/helpscout-navigator && rm -rf plugins/helpscout-navigator/.git",
-    "worker:dev": "pnpm --filter helpscout-mcp-worker dev",
-    "worker:deploy": "pnpm --filter helpscout-mcp-worker deploy",
-    "worker:type-check": "pnpm --filter helpscout-mcp-worker type-check"
+    "security:ci": "semgrep ci"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "axios": "^1.14.0",
-    "dotenv": "^17.4.2",
-    "lru-cache": "^10.4.3",
+    "@cloudflare/workers-oauth-provider": "^0.8.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.17.0",
+    "hono": "^4.12.23",
+    "jose": "^5.10.0",
+    "openredaction": "^1.1.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@anthropic-ai/mcpb": "2.1.2",
-    "@types/jest": "^30.0.0",
-    "@types/node": "^25.9.4",
-    "jest": "^30.4.2",
-    "nock": "^14.0.16",
+    "@cloudflare/workers-types": "^4.20260626.1",
     "oxfmt": "^0.56.0",
     "oxlint": "^1.71.0",
-    "rimraf": "^5.0.10",
-    "ts-jest": "^29.4.11",
-    "tsx": "^4.22.4",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.6",
+    "wrangler": "^4.105.0"
   },
   "engines": {
-    "node": ">=24.18.0"
-  },
-  "mcpName": "io.github.waylit/helpscout-mcp"
+    "node": ">=20"
+  }
 }

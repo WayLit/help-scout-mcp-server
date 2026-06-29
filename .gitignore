@@ -57,10 +57,6 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
-helpscout-mcp-extension/temp-extract/
-
-# Docker
-.dockerignore
 
 # Local docs (API reference, plans, specs - not for distribution)
 docs/
@@ -84,22 +80,13 @@ test-results/
 benchmark-results/
 perf-reports/
 
-# MCP Registry tokens
-.mcpregistry_*
-
-# Script state files (may contain sensitive data)
-scripts/.import-progress.json
-scripts/*.state.json
-
 # Braintrust session logs
 .braintrust/
 
 # Worker dev secrets & build artifacts
-worker/.dev.vars
-worker/wrangler.custom.jsonc
-worker/node_modules/
-worker/.wrangler/
-worker/dist/
+.dev.vars
+wrangler.custom.jsonc
+.wrangler/
 
 # Sidecar projects
 meridian-sim/

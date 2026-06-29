@@ -18,19 +18,18 @@ All commands run from the repo root unless noted.
 pnpm install
 ```
 
-`pnpm install` at the repo root installs both the stdio server and the worker workspace package into a single lockfile.
+This installs the worker's dependencies from the repo-root `package.json`.
 
 ## 2. Create the KV namespace
 
 `OAUTH_KV` stores transient OAuth state (10-min TTL). Per-user Help Scout tokens live in Durable Object storage, not here.
 
 ```bash
-cd worker
 wrangler kv namespace create OAUTH_KV
 wrangler kv namespace create OAUTH_KV --preview
 ```
 
-Paste the two returned IDs into `worker/wrangler.jsonc` (`id` and `preview_id`), replacing the `REPLACE_WITH_*` placeholders.
+Paste the two returned IDs into `wrangler.jsonc` (`id` and `preview_id`), replacing the `REPLACE_WITH_*` placeholders.
 
 ## 3. Set up Cloudflare Access (identity)
 
@@ -59,7 +58,6 @@ At https://secure.helpscout.net/users/apps create a new OAuth app.
 ## 5. Set worker secrets
 
 ```bash
-cd worker
 wrangler secret put HELPSCOUT_APP_ID
 wrangler secret put HELPSCOUT_APP_SECRET
 wrangler secret put CF_ACCESS_TEAM_DOMAIN
@@ -80,7 +78,7 @@ Loopback (`localhost`, `127.0.0.1`, `[::1]`) is always allowed, so desktop clien
 ### Option A: default — deploy to `*.workers.dev`
 
 ```bash
-pnpm --filter helpscout-mcp-worker deploy
+pnpm deploy
 ```
 
 Your worker is now at `https://helpscout-mcp.<account>.workers.dev`.
@@ -90,7 +88,6 @@ Your worker is now at `https://helpscout-mcp.<account>.workers.dev`.
 The hostname's zone must be a Cloudflare-managed zone on the same account; `custom_domain: true` provisions DNS automatically.
 
 ```bash
-cd worker
 cp wrangler.custom.jsonc.example wrangler.custom.jsonc
 # edit wrangler.custom.jsonc:
 #   - set "routes" pattern to your hostname
@@ -115,8 +112,8 @@ A successful deploy prints the worker URL. Sanity checks:
 curl -i https://helpscout-mcp.waylit.ai/mcp
 
 # Type-check + dry-run is the same gate CI uses:
-pnpm --filter helpscout-mcp-worker type-check
-pnpm --filter helpscout-mcp-worker exec wrangler deploy --dry-run
+pnpm type-check
+pnpm exec wrangler deploy --dry-run
 ```
 
 ## 8. Connect an MCP client
@@ -145,7 +142,6 @@ The client then exchanges the resulting code at `/token`, stores its own bearer 
 For internal-tool deployments, an append-only D1 log of "who called what when" is cheap insurance.
 
 ```bash
-cd worker
 wrangler d1 create helpscout-mcp-audit
 # Add to wrangler.jsonc (or wrangler.custom.jsonc):
 #   "d1_databases": [

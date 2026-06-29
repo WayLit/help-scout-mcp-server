@@ -12,19 +12,19 @@ cd help-scout-mcp-server
 
 2. **Install dependencies**
 ```bash
-npm install
+pnpm install
 ```
 
 3. **Set up environment**
 ```bash
-cp .env.example .env
-# Add your Help Scout API credentials to .env
+cp .dev.vars.example .dev.vars
+# Add your Help Scout + Cloudflare Access values to .dev.vars (see README.md)
 ```
 
-4. **Run tests and build**
+4. **Run tests and type-check**
 ```bash
-npm test
-npm run build
+pnpm test
+pnpm type-check
 ```
 
 ## 🛠️ Development Workflow
@@ -43,10 +43,10 @@ git checkout -b feature/your-feature-name
 
 3. **Test your changes**
 ```bash
-npm run lint        # Check code style
-npm run type-check  # Verify TypeScript types
-npm test           # Run test suite
-npm run build      # Ensure it builds
+pnpm lint         # Check code style (oxlint)
+pnpm type-check   # Verify TypeScript types
+pnpm test         # Run test suite (vitest)
+pnpm exec wrangler deploy --dry-run  # Ensure the worker builds
 ```
 
 4. **Commit and push**
@@ -61,7 +61,7 @@ git push origin feature/your-feature-name
 ### Code Standards
 
 - **TypeScript**: Use strict type checking
-- **ESLint**: Follow the existing linting rules
+- **oxlint**: Follow the existing linting rules
 - **Testing**: Add tests for new features and bug fixes
 - **Documentation**: Update README and JSDoc comments as needed
 
@@ -104,17 +104,19 @@ describe('FeatureName', () => {
 
 ```
 src/
-├── __tests__/          # Test files
-├── tools/              # MCP tool implementations
-├── resources/          # MCP resource handlers
-├── prompts/            # MCP prompt templates
-├── schema/             # TypeScript types and Zod schemas
-├── utils/              # Shared utilities
-│   ├── config.ts       # Configuration management
-│   ├── logger.ts       # Logging utilities
-│   ├── cache.ts        # Caching layer
-│   └── helpscout-client.ts  # Help Scout API client
-└── index.ts            # Main server entry point
+├── __tests__/          # Test files (vitest)
+├── index.ts            # Entry: OAuthProvider wrapping the HelpScoutMCP Durable Object
+├── tools.ts            # MCP tool implementations
+├── resources.ts        # MCP resource handlers
+├── prompts.ts          # MCP prompt templates
+├── schemas.ts          # Zod schemas / types
+├── helpscout-api.ts    # Per-user Help Scout API client
+├── auth-handler.ts     # OAuth + Cloudflare Access auth flow
+├── access-jwt.ts       # Cloudflare Access JWT verification
+├── instructions.ts     # Per-user server instructions / inbox discovery
+├── redaction.ts        # PII redaction (OpenRedaction)
+├── audit.ts            # Optional D1 audit log
+└── logger.ts           # Logging utilities
 ```
 
 ## 🐛 Bug Reports

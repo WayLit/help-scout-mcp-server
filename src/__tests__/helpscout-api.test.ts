@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { HelpScoutAPI, HelpScoutApiError } from "../helpscout-api";
+import { HelpScoutAPI } from "../helpscout-api";
 import type { Env, HelpScoutTokenRecord } from "../types";
 
 /**
