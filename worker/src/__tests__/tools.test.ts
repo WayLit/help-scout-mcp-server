@@ -18,6 +18,7 @@ const EXPECTED_TOOL_NAMES = [
   "advancedConversationSearch",
   "comprehensiveConversationSearch",
   "structuredConversationFilter",
+  "updateConversationStatus",
   "getCustomer",
   "listCustomers",
   "searchCustomersByEmail",
@@ -34,6 +35,7 @@ type RegisteredTool = { description?: string; handler: ToolHandler };
 function fakeApi() {
   return {
     get: vi.fn(),
+    patch: vi.fn(),
     userEmail: "tester@example.com",
   };
 }
@@ -58,7 +60,7 @@ beforeEach(() => {
 });
 
 describe("registerTools", () => {
-  it("registers exactly the expected 19 tool names", () => {
+  it("registers exactly the expected 20 tool names", () => {
     const { tools } = setupServer();
     expect(Object.keys(tools).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
@@ -278,6 +280,47 @@ describe("draftReply", () => {
     );
     const payload = parseResult(result) as { draftingInstructions: string };
     expect(payload.draftingInstructions).toContain("Keep it under 3 sentences.");
+  });
+});
+
+describe("updateConversationStatus", () => {
+  it("issues a JSONPatch replace op for /status and reports success", async () => {
+    const { api, tools } = setupServer();
+    api.patch.mockResolvedValue({});
+
+    const result = await tools.updateConversationStatus.handler(
+      { conversationId: "12345", status: "closed" },
+      {},
+    );
+
+    expect(api.patch).toHaveBeenCalledWith("/conversations/12345", {
+      op: "replace",
+      path: "/status",
+      value: "closed",
+    });
+    const payload = parseResult(result) as {
+      success: boolean;
+      conversationId: string;
+      status: string;
+    };
+    expect(result.isError).toBeFalsy();
+    expect(payload.success).toBe(true);
+    expect(payload.conversationId).toBe("12345");
+    expect(payload.status).toBe("closed");
+  });
+
+  it("surfaces a Help Scout API error as an isError result", async () => {
+    const { api, tools } = setupServer();
+    api.patch.mockRejectedValue(new HelpScoutApiError("NOT_FOUND", "no such conversation", 404));
+
+    const result = await tools.updateConversationStatus.handler(
+      { conversationId: "99999", status: "active" },
+      {},
+    );
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error: string; tool: string };
+    expect(payload.error).toBe("NOT_FOUND");
+    expect(payload.tool).toBe("updateConversationStatus");
   });
 });
 

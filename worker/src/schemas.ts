@@ -114,6 +114,15 @@ export const ListAllInboxesShape = {
   limit: z.number().min(1).max(100).default(100),
 };
 
+// ── Conversation write tools ────────────────────────────────────────────────
+
+export const UpdateConversationStatusShape = {
+  conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
+  status: z
+    .enum(["active", "pending", "closed", "spam"])
+    .describe("New conversation status"),
+};
+
 // ── Customer tools ─────────────────────────────────────────────────────────
 
 export const GetCustomerShape = {

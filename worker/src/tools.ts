@@ -48,6 +48,7 @@ import {
   SearchInboxesShape,
   StructuredConversationFilterShape,
   Thread,
+  UpdateConversationStatusShape,
   User,
 } from "./schemas";
 
@@ -968,6 +969,32 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         });
       } catch (err) {
         return errorResult(err, "structuredConversationFilter", api.userEmail);
+      }
+    },
+  );
+
+  // ── updateConversationStatus ─────────────────────────────────────────
+  server.tool(
+    "updateConversationStatus",
+    "Change a conversation's status (active, pending, closed, spam). This is a write operation that modifies the ticket in Help Scout.",
+    UpdateConversationStatusShape,
+    async (input): Promise<CallToolResult> => {
+      try {
+        // Help Scout JSONPatch endpoint: PATCH /v2/conversations/{id} with a
+        // single replace op. Returns 204 No Content on success.
+        await api.patch(`/conversations/${input.conversationId}`, {
+          op: "replace",
+          path: "/status",
+          value: input.status,
+        });
+        return textResult({
+          success: true,
+          conversationId: input.conversationId,
+          status: input.status,
+          message: `Conversation ${input.conversationId} status updated to "${input.status}".`,
+        });
+      } catch (err) {
+        return errorResult(err, "updateConversationStatus", api.userEmail);
       }
     },
   );
