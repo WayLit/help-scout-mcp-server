@@ -35,11 +35,6 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function absoluteCallback(request: Request, path: string): string {
-  const url = new URL(request.url);
-  return `${url.protocol}//${url.host}${path}`;
-}
-
 /**
  * Decide whether an MCP client's `redirect_uri` is allowed.
  *

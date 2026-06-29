@@ -35,20 +35,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Build
-        run: pnpm build
-
       - name: Run tests
         run: pnpm test
-        env:
-          SKIP_MCPB_TESTS: "true"
 
-      - name: Worker type check
-        run: pnpm --filter helpscout-mcp-worker type-check
-
-      - name: Worker tests
-        run: pnpm --filter helpscout-mcp-worker test
-
-      - name: Worker deploy dry run
-        run: pnpm --filter helpscout-mcp-worker exec wrangler deploy --dry-run
+      - name: Deploy dry run
+        run: pnpm exec wrangler deploy --dry-run
 
