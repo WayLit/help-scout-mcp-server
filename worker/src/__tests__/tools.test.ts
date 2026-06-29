@@ -10,7 +10,9 @@ const EXPECTED_TOOL_NAMES = [
   "searchInboxes",
   "searchConversations",
   "getConversationSummary",
+  "draftReply",
   "getThreads",
+  "whoami",
   "getServerTime",
   "listAllInboxes",
   "advancedConversationSearch",
@@ -56,7 +58,7 @@ beforeEach(() => {
 });
 
 describe("registerTools", () => {
-  it("registers exactly the expected 17 tool names", () => {
+  it("registers exactly the expected 19 tool names", () => {
     const { tools } = setupServer();
     expect(Object.keys(tools).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
@@ -66,6 +68,33 @@ describe("registerTools", () => {
     for (const name of EXPECTED_TOOL_NAMES) {
       expect(tools[name]?.description, `${name} missing description`).toBeTruthy();
     }
+  });
+});
+
+describe("whoami", () => {
+  it("returns the authenticated Help Scout user and the access email", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      id: 12345,
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@helpscout.example",
+      role: "owner",
+      type: "user",
+      timezone: "America/New_York",
+    });
+
+    const result = await tools.whoami.handler({}, {});
+    const payload = parseResult(result) as {
+      user: { id: number; email: string; role: string };
+      accessEmail: string;
+    };
+
+    expect(api.get).toHaveBeenCalledWith("/users/me");
+    expect(payload.user.id).toBe(12345);
+    expect(payload.user.email).toBe("ada@helpscout.example");
+    expect(payload.user.role).toBe("owner");
+    expect(payload.accessEmail).toBe("tester@example.com");
   });
 });
 
@@ -118,6 +147,137 @@ describe("searchInboxes", () => {
     const payload = parseResult(result) as { results: unknown[]; usage: string };
     expect(payload.results).toEqual([]);
     expect(payload.usage).toMatch(/No inboxes matched/);
+  });
+});
+
+describe("searchConversations status defaults", () => {
+  const emptyPage = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
+
+  function queriedStatuses(api: ReturnType<typeof fakeApi>): string[] {
+    return api.get.mock.calls
+      .map((c) => (c[1] as { status?: string } | undefined)?.status)
+      .filter((s): s is string => typeof s === "string");
+  }
+
+  it("defaults to active+pending and never queries closed", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    const result = await tools.searchConversations.handler(
+      { limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+    const payload = parseResult(result) as {
+      searchInfo: { statusesSearched: string[] };
+    };
+
+    expect(queriedStatuses(api).sort()).toEqual(["active", "pending"]);
+    expect(queriedStatuses(api)).not.toContain("closed");
+    expect(payload.searchInfo.statusesSearched.sort()).toEqual(["active", "pending"]);
+  });
+
+  it("searches only closed when status:\"closed\" is requested", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { status: "closed", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(queriedStatuses(api)).toEqual(["closed"]);
+  });
+});
+
+describe("draftReply", () => {
+  it("returns a brief with the latest customer message and resolved prior history", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockImplementation(async (endpoint: string, params?: Record<string, unknown>) => {
+      if (endpoint === "/conversations/100") {
+        return {
+          id: 100,
+          number: 5,
+          subject: "Login broken",
+          status: "active",
+          tags: [],
+          assignee: null,
+          customer: { id: 7, firstName: "Ada", lastName: "L", email: "ada@x.com" },
+        };
+      }
+      if (endpoint === "/conversations/100/threads") {
+        return {
+          _embedded: {
+            threads: [
+              { id: 1, type: "customer", body: "I can't log in", createdAt: "2026-01-01T00:00:00Z", createdBy: null },
+              { id: 2, type: "message", body: "Tried a reset?", createdAt: "2026-01-02T00:00:00Z", createdBy: { id: 9 } },
+              { id: 3, type: "customer", body: "Still broken", createdAt: "2026-01-03T00:00:00Z", createdBy: null },
+            ],
+          },
+        };
+      }
+      if (endpoint === "/conversations" && params?.query === "customerIds:7") {
+        return {
+          _embedded: {
+            conversations: [
+              { id: 100, number: 5, subject: "Login broken", status: "active", createdAt: "2026-01-01T00:00:00Z" },
+              { id: 90, number: 4, subject: "Billing question", status: "closed", createdAt: "2025-12-01T00:00:00Z" },
+            ],
+          },
+          page: { totalElements: 2 },
+        };
+      }
+      if (endpoint === "/conversations/90/threads") {
+        return {
+          _embedded: {
+            threads: [
+              { id: 11, type: "customer", body: "Charged twice?", createdAt: "2025-12-01T00:00:00Z", createdBy: null },
+              { id: 12, type: "message", body: "Refunded the duplicate.", createdAt: "2025-12-02T00:00:00Z", createdBy: { id: 9 } },
+            ],
+          },
+        };
+      }
+      return {};
+    });
+
+    const result = await tools.draftReply.handler(
+      { conversationId: "100", historyLimit: 5 },
+      {},
+    );
+    const payload = parseResult(result) as {
+      currentConversation: { id: number };
+      latestCustomerMessage: { body: string } | null;
+      customerHistory: Array<{ id: number; customerAsk: string | null; resolution: string | null }>;
+      draftingInstructions: string;
+    };
+
+    expect(payload.currentConversation.id).toBe(100);
+    expect(payload.latestCustomerMessage?.body).toBe("Still broken");
+    // current conversation (100) is excluded; only the prior one (90) remains
+    expect(payload.customerHistory.map((h) => h.id)).toEqual([90]);
+    expect(payload.customerHistory[0].customerAsk).toBe("Charged twice?");
+    expect(payload.customerHistory[0].resolution).toBe("Refunded the duplicate.");
+    expect(payload.draftingInstructions).toMatch(/reply to the latest customer message/i);
+  });
+
+  it("threads optional guidance into the drafting instructions", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockImplementation(async (endpoint: string) => {
+      if (endpoint === "/conversations/100") {
+        return { id: 100, number: 5, subject: "Hi", status: "active", tags: [], assignee: null, customer: { id: 7 } };
+      }
+      if (endpoint === "/conversations/100/threads") {
+        return { _embedded: { threads: [] } };
+      }
+      return { _embedded: { conversations: [] }, page: { totalElements: 0 } };
+    });
+
+    const result = await tools.draftReply.handler(
+      { conversationId: "100", historyLimit: 0, guidance: "Keep it under 3 sentences." },
+      {},
+    );
+    const payload = parseResult(result) as { draftingInstructions: string };
+    expect(payload.draftingInstructions).toContain("Keep it under 3 sentences.");
   });
 });
 

@@ -34,6 +34,8 @@ ${inboxList}
 | See all conversations for an organization | getOrganizationConversations |
 | Get full conversation thread | getThreads |
 | Quick conversation preview | getConversationSummary |
+| Draft a reply using the customer's history | draftReply |
+| Identify the current Help Scout user (your id/email/role) | whoami |
 
 ## Workflow Patterns
 - **Ticket investigation**: searchConversations → getConversationSummary → getThreads
@@ -43,7 +45,7 @@ ${inboxList}
 
 ## Notes
 - Always use inbox IDs from the list above (not names)
-- All search tools default to active+pending+closed statuses
+- searchConversations defaults to active+pending (pass status:"closed" to include closed); other search tools include closed by default
 - Use getServerTime for date-relative queries
 - PII redaction is enabled by default (set REDACT_PII=false to disable)`;
 }

@@ -30,6 +30,7 @@ import {
   Conversation,
   Customer,
   CustomerAddress,
+  DraftReplyShape,
   GetConversationSummaryShape,
   GetCustomerContactsShape,
   GetCustomerShape,
@@ -47,6 +48,7 @@ import {
   SearchInboxesShape,
   StructuredConversationFilterShape,
   Thread,
+  User,
 } from "./schemas";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -206,6 +208,20 @@ function buildSearchQuery(terms: string[], searchIn: string[]): string {
   return queries.join(" OR ");
 }
 
+/** Pick the first customer message and latest staff reply from a thread list. */
+function pickFirstAndLast(threads: Thread[]): {
+  firstCustomer: Thread | undefined;
+  latestStaff: Thread | undefined;
+} {
+  const firstCustomer = threads
+    .filter((t) => t.type === "customer")
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];
+  const latestStaff = threads
+    .filter((t) => t.type === "message" && t.createdBy)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+  return { firstCustomer, latestStaff };
+}
+
 // ── Tool registration ──────────────────────────────────────────────────────
 
 export function registerTools(server: McpServer, api: HelpScoutAPI): void {
@@ -249,7 +265,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
   // ── searchConversations ──────────────────────────────────────────────
   server.tool(
     "searchConversations",
-    "List conversations by status, date, inbox, or tag. Searches active/pending/closed in parallel by default. For keyword search use comprehensiveConversationSearch.",
+    "List conversations by status, date, inbox, or tag. Searches active+pending in parallel by default; pass status:\"closed\" to search closed tickets. For keyword search use comprehensiveConversationSearch.",
     SearchConversationsShape,
     async (input): Promise<CallToolResult> => {
       try {
@@ -285,7 +301,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           searchedStatuses = [input.status];
           pagination = response.page;
         } else {
-          const statuses = ["active", "pending", "closed"] as const;
+          // Default excludes "closed" — closed tickets are usually noise for
+          // "what's open right now" queries. Pass status:"closed" to search it.
+          const statuses = ["active", "pending"] as const;
           searchedStatuses = [...statuses];
           const results = await Promise.allSettled(
             statuses.map((status) =>
@@ -436,14 +454,8 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           { page: 1, size: 50 },
         );
         const threads = threadsResponse._embedded?.threads || [];
-        const customerThreads = threads.filter((t) => t.type === "customer");
-        const staffThreads = threads.filter((t) => t.type === "message" && t.createdBy);
-        const firstCustomerMessage = customerThreads.sort(
-          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-        )[0];
-        const latestStaffReply = staffThreads.sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-        )[0];
+        const { firstCustomer: firstCustomerMessage, latestStaff: latestStaffReply } =
+          pickFirstAndLast(threads);
 
         return textResult({
           conversation: {
@@ -479,6 +491,110 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
     },
   );
 
+  // ── draftReply ───────────────────────────────────────────────────────
+  server.tool(
+    "draftReply",
+    "Assemble everything needed to reply to a conversation: the current thread, the latest customer message, and the customer's previous conversations with how they were resolved. Returns a drafting brief — use it to write a reply that fits the customer's history and the team's tone. Gathers context only; it does not send anything.",
+    DraftReplyShape,
+    async (input): Promise<CallToolResult> => {
+      try {
+        const conversation = await api.get<Conversation>(
+          `/conversations/${input.conversationId}`,
+        );
+        const threadsResponse = await api.get<PaginatedResponse<Thread>>(
+          `/conversations/${input.conversationId}/threads`,
+          { page: 1, size: 50 },
+        );
+        const threads = threadsResponse._embedded?.threads ?? [];
+        const latestCustomerMessage = threads
+          .filter((t) => t.type === "customer")
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+        // Pull the customer's previous conversations across all statuses — closed
+        // ones reveal how similar issues were resolved. Fetch one extra so we can
+        // drop the current conversation and still return up to historyLimit.
+        const customerId = conversation.customer?.id;
+        type HistoryEntry = {
+          id: number;
+          number: number;
+          subject: string;
+          status: string;
+          createdAt: string;
+          customerAsk: string | null;
+          resolution: string | null;
+        };
+        let customerHistory: HistoryEntry[] = [];
+        if (customerId && input.historyLimit > 0) {
+          const priorResponse = await api.get<PaginatedResponse<Conversation>>(
+            "/conversations",
+            {
+              query: `customerIds:${customerId}`,
+              status: "all",
+              sortField: "createdAt",
+              sortOrder: "desc",
+              page: 1,
+              size: input.historyLimit + 1,
+            },
+          );
+          const prior = (priorResponse._embedded?.conversations ?? [])
+            .filter((c) => c.id !== conversation.id)
+            .slice(0, input.historyLimit);
+
+          const settled = await Promise.allSettled(
+            prior.map(async (c): Promise<HistoryEntry> => {
+              const tRes = await api.get<PaginatedResponse<Thread>>(
+                `/conversations/${c.id}/threads`,
+                { page: 1, size: 50 },
+              );
+              const { firstCustomer, latestStaff } = pickFirstAndLast(
+                tRes._embedded?.threads ?? [],
+              );
+              return {
+                id: c.id,
+                number: c.number,
+                subject: await redactText(c.subject),
+                status: c.status,
+                createdAt: c.createdAt,
+                customerAsk: firstCustomer ? await redactText(firstCustomer.body) : null,
+                resolution: latestStaff ? await redactText(latestStaff.body) : null,
+              };
+            }),
+          );
+          customerHistory = settled
+            .filter((s): s is PromiseFulfilledResult<HistoryEntry> => s.status === "fulfilled")
+            .map((s) => s.value);
+        }
+
+        return textResult({
+          currentConversation: {
+            id: conversation.id,
+            number: conversation.number,
+            subject: await redactText(conversation.subject),
+            status: conversation.status,
+            tags: conversation.tags,
+            assignee: conversation.assignee,
+            customer: conversation.customer,
+          },
+          latestCustomerMessage: latestCustomerMessage
+            ? {
+                createdAt: latestCustomerMessage.createdAt,
+                body: await redactText(latestCustomerMessage.body),
+              }
+            : null,
+          conversationThreads: await redactThreadBodies(threads),
+          customerHistory,
+          draftingInstructions:
+            "Write a reply to the latest customer message, speaking as the support agent. Use `conversationThreads` for the immediate context and `customerHistory` to understand the customer's prior issues and how they were resolved. Match the tone of past staff replies. Address the customer's open question specifically, and do not invent facts that aren't supported by the provided context." +
+            (input.guidance ? ` Additional guidance: ${input.guidance}` : ""),
+          usage:
+            "Context only — this tool sends nothing. Review the draft, then send the reply from Help Scout.",
+        });
+      } catch (err) {
+        return errorResult(err, "draftReply", api.userEmail);
+      }
+    },
+  );
+
   // ── getThreads ───────────────────────────────────────────────────────
   server.tool(
     "getThreads",
@@ -499,6 +615,34 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         });
       } catch (err) {
         return errorResult(err, "getThreads", api.userEmail);
+      }
+    },
+  );
+
+  // ── whoami ───────────────────────────────────────────────────────────
+  server.tool(
+    "whoami",
+    "Get the authenticated Help Scout user (id, name, email, role). Use the returned id as assignedTo in structuredConversationFilter to find your own conversations.",
+    {},
+    async (): Promise<CallToolResult> => {
+      try {
+        const me = await api.get<User>("/users/me");
+        return textResult({
+          user: {
+            id: me.id,
+            firstName: me.firstName,
+            lastName: me.lastName,
+            email: me.email,
+            role: me.role,
+            type: me.type,
+            timezone: me.timezone,
+          },
+          accessEmail: api.userEmail,
+          usage:
+            "Pass user.id as assignedTo in structuredConversationFilter to list conversations assigned to you.",
+        });
+      } catch (err) {
+        return errorResult(err, "whoami", api.userEmail);
       }
     },
   );
