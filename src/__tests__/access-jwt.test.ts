@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { generateKeyPair, SignJWT, exportJWK, type JWK, type KeyLike } from "jose";
+import { generateKeyPair, SignJWT, exportJWK, type JWK } from "jose";
 
 import {
   AccessAuthError,
@@ -12,7 +12,7 @@ const TEAM = "waylit";
 const AUD = "test-aud-tag-1234567890abcdef";
 const ISSUER = `https://${TEAM}.cloudflareaccess.com`;
 
-let privateKey: KeyLike;
+let privateKey: CryptoKey;
 let publicJwk: JWK;
 
 const env: Env = {
