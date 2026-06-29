@@ -10,16 +10,29 @@
  * calls `require()`, it only constructs the helper at module init.
  */
 
-export function createRequire(_filename: string | URL): NodeRequire {
+/**
+ * Minimal shape of Node's `require` function. The worker tsconfig only loads
+ * `@cloudflare/workers-types`, so Node's `NodeRequire` global is not in scope —
+ * we declare just enough here for the shim to type-check.
+ */
+interface RequireShim {
+  (id: string): never;
+  resolve: { (id: string): never; paths(request: string): string[] | null };
+  cache: Record<string, unknown>;
+  extensions: Record<string, unknown>;
+  main: undefined;
+}
+
+export function createRequire(_filename: string | URL): RequireShim {
   const req = function require(_id: string): never {
     throw new Error("Cannot use require() in Cloudflare Workers.");
-  } as unknown as NodeRequire;
+  } as unknown as RequireShim;
   req.resolve = (() => {
     throw new Error("Not supported");
-  }) as unknown as NodeRequire["resolve"];
+  }) as unknown as RequireShim["resolve"];
   req.resolve.paths = () => null;
   req.cache = {};
-  req.extensions = {} as NodeRequire["extensions"];
+  req.extensions = {};
   req.main = undefined;
   return req;
 }
