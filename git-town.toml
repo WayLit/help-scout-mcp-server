@@ -4,6 +4,12 @@
 
 [branches]
 main = "main"
+perennials = ["main"] 
 
 [hosting]
+dev-remote = "origin"
 github-connector = "gh"
+
+[sync]
+feature-strategy = "rebase"
+push-hook = false
