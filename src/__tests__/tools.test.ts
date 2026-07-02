@@ -262,7 +262,7 @@ describe("draftReply", () => {
     expect(payload.draftingInstructions).toMatch(/reply to the latest customer message/i);
   });
 
-  it("threads optional guidance into the drafting instructions", async () => {
+  it("keeps operator guidance in its own trusted field, not concatenated with customer content", async () => {
     const { api, tools } = setupServer();
     api.get.mockImplementation(async (endpoint: string) => {
       if (endpoint === "/conversations/100") {
@@ -278,8 +278,134 @@ describe("draftReply", () => {
       { conversationId: "100", historyLimit: 0, guidance: "Keep it under 3 sentences." },
       {},
     );
-    const payload = parseResult(result) as { draftingInstructions: string };
-    expect(payload.draftingInstructions).toContain("Keep it under 3 sentences.");
+    const payload = parseResult(result) as {
+      draftingInstructions: string;
+      operatorGuidance: string | null;
+    };
+    expect(payload.operatorGuidance).toBe("Keep it under 3 sentences.");
+    // Untrusted customer content and operator guidance must stay separated:
+    // guidance is never spliced into the instruction prose.
+    expect(payload.draftingInstructions).not.toContain("Keep it under 3 sentences.");
+    expect(payload.draftingInstructions).toMatch(/untrusted content written by the customer/i);
+  });
+});
+
+describe("PII redaction in read tools", () => {
+  beforeEach(() => {
+    configureRedaction({ REDACT_PII: "true" } as never);
+  });
+
+  it("tokenizes embedded customer fields in conversation search results", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      _embedded: {
+        conversations: [
+          {
+            id: 1,
+            createdAt: "2026-01-01T00:00:00Z",
+            customer: { id: 7, firstName: "Ada", lastName: "Lovelace", email: "ada@x.com" },
+          },
+        ],
+      },
+      page: { totalElements: 1 },
+    });
+
+    const result = await tools.searchConversations.handler(
+      { status: "active", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+    const payload = parseResult(result) as {
+      results: Array<{ customer: { firstName: string; lastName: string; email: string } }>;
+    };
+    expect(payload.results[0].customer.firstName).toBe("[NAME_REDACTED]");
+    expect(payload.results[0].customer.lastName).toBe("[NAME_REDACTED]");
+    expect(payload.results[0].customer.email).toBe("[EMAIL_REDACTED]");
+  });
+
+  it("tokenizes all contact channel values in getCustomerContacts", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockImplementation(async (endpoint: string) => {
+      if (endpoint.endsWith("/emails"))
+        return { _embedded: { emails: [{ id: 1, value: "ada@x.com", type: "home" }] } };
+      if (endpoint.endsWith("/phones"))
+        return { _embedded: { phones: [{ id: 2, value: "+15551234", type: "mobile" }] } };
+      if (endpoint.endsWith("/chats"))
+        return { _embedded: { chats: [{ id: 3, value: "ada#1234", type: "aim" }] } };
+      if (endpoint.endsWith("/social-profiles"))
+        return { _embedded: { social_profiles: [{ id: 4, value: "@ada", type: "twitter" }] } };
+      if (endpoint.endsWith("/websites"))
+        return { _embedded: { websites: [{ id: 5, value: "ada.dev" }] } };
+      if (endpoint.endsWith("/address"))
+        return { city: "London", state: "X", postalCode: "EC1", lines: ["1 Main St"] };
+      return {};
+    });
+
+    const result = await tools.getCustomerContacts.handler({ customerId: "7" }, {});
+    const payload = parseResult(result) as {
+      emails: Array<{ value: string }>;
+      phones: Array<{ value: string }>;
+      chats: Array<{ value: string }>;
+      socialProfiles: Array<{ value: string }>;
+      websites: Array<{ value: string }>;
+      address: { city: string; lines: string[] };
+    };
+    expect(payload.emails[0].value).toBe("[EMAIL_REDACTED]");
+    expect(payload.phones[0].value).toBe("[PHONE_REDACTED]");
+    expect(payload.chats[0].value).toBe("[CHAT_REDACTED]");
+    expect(payload.socialProfiles[0].value).toBe("[SOCIAL_REDACTED]");
+    expect(payload.websites[0].value).toBe("[WEBSITE_REDACTED]");
+    expect(payload.address.city).toBe("[CITY_REDACTED]");
+    expect(payload.address.lines[0]).toBe("[ADDRESS_REDACTED]");
+  });
+
+  it("tokenizes primaryEmail and names in listCustomers results", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      _embedded: {
+        customers: [
+          {
+            id: 7,
+            firstName: "Ada",
+            lastName: "Lovelace",
+            _embedded: { emails: [{ id: 1, value: "ada@x.com" }] },
+          },
+        ],
+      },
+      page: { totalElements: 1 },
+    });
+
+    const result = await tools.listCustomers.handler(
+      { page: 1, sortField: "createdAt", sortOrder: "desc" },
+      {},
+    );
+    const payload = parseResult(result) as {
+      results: Array<{ firstName: string; lastName: string; primaryEmail: string }>;
+    };
+    expect(payload.results[0].firstName).toBe("[NAME_REDACTED]");
+    expect(payload.results[0].lastName).toBe("[NAME_REDACTED]");
+    expect(payload.results[0].primaryEmail).toBe("[EMAIL_REDACTED]");
+  });
+
+  it("leaves customer fields intact when redaction is disabled", async () => {
+    configureRedaction({ REDACT_PII: "false" } as never);
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      _embedded: {
+        conversations: [
+          { id: 1, createdAt: "2026-01-01T00:00:00Z", customer: { id: 7, firstName: "Ada" } },
+        ],
+      },
+      page: { totalElements: 1 },
+    });
+
+    const result = await tools.searchConversations.handler(
+      { status: "active", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+    const payload = parseResult(result) as {
+      results: Array<{ customer: { firstName: string } }>;
+    };
+    expect(payload.results[0].customer.firstName).toBe("Ada");
   });
 });
 

@@ -249,6 +249,32 @@ app.get("/callback/helpscout", async (c) => {
     return c.text("State expired or not found", 400);
   }
 
+  // Re-verify the Access identity presenting the callback and bind it to the
+  // identity that started the flow. The `state` token alone is not a sufficient
+  // CSRF/auth-code-injection guard: if it leaks (referer, history, proxy logs,
+  // shared device) within its TTL, a different Access-authenticated user could
+  // complete the Help Scout leg with their own account and have the resulting
+  // tokens written into the original user's DO (keyed by stored email). Asserting
+  // the live JWT email matches stored.accessIdentity.email closes that window.
+  let callbackIdentity;
+  try {
+    callbackIdentity = await verifyAccessJwt(c.req.raw, c.env);
+  } catch (err) {
+    if (err instanceof AccessAuthError) {
+      logger.warn("hs callback: access JWT rejected", { requestId, reason: err.message });
+      return c.text(err.message, err.status);
+    }
+    throw err;
+  }
+  if (callbackIdentity.email !== stored.accessIdentity.email) {
+    logger.warn("hs callback: identity mismatch — refusing cross-identity token store", {
+      requestId,
+      callbackEmail: callbackIdentity.email,
+      stateEmail: stored.accessIdentity.email,
+    });
+    return c.text("Callback identity does not match the initiating user", 403);
+  }
+
   let tokens;
   try {
     tokens = await exchangeHelpScoutCode(c.env, code);
