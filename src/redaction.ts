@@ -53,8 +53,10 @@ export function isRedactionEnabled(): boolean {
 
 /**
  * Redact a single string. No-op if redaction is disabled or input is empty.
- * Best-effort: if the underlying detector throws, returns the original text
- * and logs — never block a tool response on redaction failure.
+ * Fails closed: if the underlying detector throws, this throws too rather
+ * than returning unredacted text — callers (tool handlers) already catch
+ * and turn errors into an error response, which is preferable to leaking
+ * raw customer PII to the client.
  */
 export async function redactText(input: string | undefined | null): Promise<string> {
   if (!enabled) return input ?? "";
@@ -63,11 +65,11 @@ export async function redactText(input: string | undefined | null): Promise<stri
     const result = await getRedactor().detect(input);
     return result.redacted;
   } catch (err) {
-    logger.error("redaction failed, returning original", {
+    logger.error("redaction failed, refusing to return unredacted text", {
       error: err instanceof Error ? err.message : String(err),
       length: input.length,
     });
-    return input;
+    throw new Error("PII redaction failed");
   }
 }
 
@@ -103,11 +105,13 @@ export async function redactThreadBodies<T extends { body?: string }>(threads: T
 
 /**
  * Redact a Help Scout customer-shaped object's PII fields.
- * Uses literal token replacement for structured PII (name/email/phone) rather
- * than running each tiny field through OpenRedaction's pattern engine — those
- * fields ARE the PII, no detection step needed.
+ * name/email/phone are literal token replacement — those fields ARE the PII,
+ * no detection step needed. `location`/`background` are free text (bio-like
+ * fields that can embed names/addresses/etc.) so they get a detector pass.
+ * `jobTitle` is deliberately left untouched — it's useful context for
+ * answering tickets and isn't itself PII.
  */
-export function redactCustomerFields<T extends object>(customer: T): T {
+export async function redactCustomerFields<T extends object>(customer: T): Promise<T> {
   if (!enabled) return customer;
   const out = { ...customer } as Record<string, unknown>;
   if (typeof out.firstName === "string" && out.firstName) out.firstName = "[NAME_REDACTED]";
@@ -116,6 +120,9 @@ export function redactCustomerFields<T extends object>(customer: T): T {
   // `primaryEmail` is a synthetic field listCustomers lifts out of _embedded.emails.
   if (typeof out.primaryEmail === "string" && out.primaryEmail) out.primaryEmail = "[EMAIL_REDACTED]";
   if (typeof out.phone === "string" && out.phone) out.phone = "[PHONE_REDACTED]";
+  if (typeof out.location === "string" && out.location) out.location = await redactText(out.location);
+  if (typeof out.background === "string" && out.background)
+    out.background = await redactText(out.background);
   return out as T;
 }
 
@@ -124,19 +131,61 @@ export function redactCustomerFields<T extends object>(customer: T): T {
  * list/search results don't leak names/emails into LLM context or logs. Returns
  * a new array; records without a customer object pass through untouched.
  */
-export function redactConversationCustomers<T extends { customer?: unknown }>(items: T[]): T[] {
+export async function redactConversationCustomers<T extends { customer?: unknown }>(
+  items: T[],
+): Promise<T[]> {
   if (!enabled) return items;
-  return items.map((item) =>
-    item && typeof item.customer === "object" && item.customer
-      ? { ...item, customer: redactCustomerFields(item.customer as object) }
-      : item,
+  return Promise.all(
+    items.map(async (item) =>
+      item && typeof item.customer === "object" && item.customer
+        ? { ...item, customer: await redactCustomerFields(item.customer as object) }
+        : item,
+    ),
   );
 }
 
 /** Redact a list of customer-shaped records (customer search/list tools). */
-export function redactCustomerList<T extends object>(customers: T[]): T[] {
+export async function redactCustomerList<T extends object>(customers: T[]): Promise<T[]> {
   if (!enabled) return customers;
-  return customers.map((c) => redactCustomerFields(c));
+  return Promise.all(customers.map((c) => redactCustomerFields(c)));
+}
+
+/**
+ * Redact both the free-text `subject` and embedded `customer` of each
+ * conversation-shaped record. Subject lines routinely carry PII (names,
+ * order/account details) same as thread bodies, so they need a detector
+ * pass — the customer-field token swap alone isn't enough.
+ */
+export async function redactConversationList<
+  T extends { subject?: string; customer?: unknown },
+>(items: T[]): Promise<T[]> {
+  if (!enabled) return items;
+  const withCustomer = await redactConversationCustomers(items);
+  for (const item of withCustomer) {
+    if (typeof item.subject === "string" && item.subject) {
+      item.subject = await redactText(item.subject);
+    }
+  }
+  return withCustomer;
+}
+
+/**
+ * Redact a Help Scout organization-shaped object: `phones` are structured
+ * PII (token swap, like contact values); `note` is free text (detector pass,
+ * like a subject/body).
+ */
+export async function redactOrganizationFields<
+  T extends { phones?: unknown; note?: unknown },
+>(org: T): Promise<T> {
+  if (!enabled) return org;
+  const out = { ...org } as Record<string, unknown>;
+  if (Array.isArray(out.phones)) {
+    out.phones = (out.phones as unknown[]).map(() => "[PHONE_REDACTED]");
+  }
+  if (typeof out.note === "string" && out.note) {
+    out.note = await redactText(out.note);
+  }
+  return out as T;
 }
 
 /**

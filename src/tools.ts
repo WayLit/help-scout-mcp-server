@@ -21,9 +21,10 @@ import { logger, newRequestId } from "./logger";
 import {
   redactAddressFields,
   redactContactValues,
-  redactConversationCustomers,
+  redactConversationList,
   redactCustomerFields,
   redactCustomerList,
+  redactOrganizationFields,
   redactText,
   redactThreadBodies,
 } from "./redaction";
@@ -426,7 +427,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         }
 
         return textResult({
-          results: redactConversationCustomers(conversations),
+          results: await redactConversationList(conversations),
           pagination,
           searchInfo: {
             query: input.query,
@@ -469,7 +470,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             createdAt: conversation.createdAt,
             updatedAt: conversation.updatedAt,
             customer: conversation.customer
-              ? redactCustomerFields(conversation.customer)
+              ? await redactCustomerFields(conversation.customer)
               : conversation.customer,
             assignee: conversation.assignee,
             tags: conversation.tags,
@@ -480,7 +481,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
                 body: await redactText(firstCustomerMessage.body),
                 createdAt: firstCustomerMessage.createdAt,
                 customer: firstCustomerMessage.customer
-                  ? redactCustomerFields(firstCustomerMessage.customer)
+                  ? await redactCustomerFields(firstCustomerMessage.customer)
                   : firstCustomerMessage.customer,
               }
             : null,
@@ -582,7 +583,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             tags: conversation.tags,
             assignee: conversation.assignee,
             customer: conversation.customer
-              ? redactCustomerFields(conversation.customer)
+              ? await redactCustomerFields(conversation.customer)
               : conversation.customer,
           },
           latestCustomerMessage: latestCustomerMessage
@@ -767,7 +768,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         }
 
         return textResult({
-          results: redactConversationCustomers(conversations),
+          results: await redactConversationList(conversations),
           searchQuery: queryString,
           inboxScope: formatInboxScope(input.inboxId),
           searchCriteria: {
@@ -892,10 +893,12 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           failedStatuses: allResults
             .filter((r) => r.error)
             .map((r) => `[WARNING] Status "${r.status}": ${r.error}`),
-          resultsByStatus: allResults.map((r) => ({
-            ...r,
-            conversations: redactConversationCustomers(r.conversations),
-          })),
+          resultsByStatus: await Promise.all(
+            allResults.map(async (r) => ({
+              ...r,
+              conversations: await redactConversationList(r.conversations),
+            })),
+          ),
         });
       } catch (err) {
         return errorResult(err, "comprehensiveConversationSearch", api.userEmail);
@@ -963,7 +966,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         }
 
         return textResult({
-          results: redactConversationCustomers(conversations),
+          results: await redactConversationList(conversations),
           filterApplied: {
             filterType: "structural",
             assignedTo: input.assignedTo,
@@ -1049,7 +1052,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           }
         }
 
-        const redactedCustomer = redactCustomerFields(customer);
+        const redactedCustomer = await redactCustomerFields(customer);
         const result: Record<string, unknown> = { ...redactedCustomer };
         if (address) result.address = redactAddressFields(address);
         if (addressNote) result.addressNote = addressNote;
@@ -1100,7 +1103,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           return slimRecord;
         });
         return textResult({
-          results: redactCustomerList(slim),
+          results: await redactCustomerList(slim),
           returnedCount: customers.length,
           pagination: response.page,
           usage:
@@ -1147,7 +1150,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         }
 
         return textResult({
-          results: redactCustomerList(customers),
+          results: await redactCustomerList(customers),
           returnedCount: customers.length,
           searchedEmail: input.email,
           nextCursor,
@@ -1271,7 +1274,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           params,
         );
         return textResult({
-          organization: org,
+          organization: await redactOrganizationFields(org),
           usage:
             "NEXT STEPS: getOrganizationMembers for customers, getOrganizationConversations for support history.",
         });
@@ -1294,7 +1297,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         });
         const organizations = response._embedded?.organizations || [];
         return textResult({
-          results: organizations,
+          results: await Promise.all(organizations.map(redactOrganizationFields)),
           returnedCount: organizations.length,
           pagination: response.page,
           nextCursor: response._links?.next?.href,
@@ -1324,7 +1327,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         const customers = response._embedded?.customers || [];
         return textResult({
           organizationId: input.organizationId,
-          members: redactCustomerList(customers),
+          members: await redactCustomerList(customers),
           returnedCount: customers.length,
           pagination: response.page,
           nextCursor: response._links?.next?.href,
@@ -1354,18 +1357,20 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         const conversations = response._embedded?.conversations || [];
         return textResult({
           organizationId: input.organizationId,
-          conversations: conversations.map((c) => ({
-            id: c.id,
-            number: c.number,
-            subject: c.subject,
-            status: c.status,
-            customer: c.customer ? redactCustomerFields(c.customer) : c.customer,
-            assignee: c.assignee,
-            createdAt: c.createdAt,
-            updatedAt: c.updatedAt,
-            closedAt: c.closedAt,
-            tags: c.tags,
-          })),
+          conversations: await Promise.all(
+            conversations.map(async (c) => ({
+              id: c.id,
+              number: c.number,
+              subject: await redactText(c.subject),
+              status: c.status,
+              customer: c.customer ? await redactCustomerFields(c.customer) : c.customer,
+              assignee: c.assignee,
+              createdAt: c.createdAt,
+              updatedAt: c.updatedAt,
+              closedAt: c.closedAt,
+              tags: c.tags,
+            })),
+          ),
           returnedCount: conversations.length,
           pagination: response.page,
           nextCursor: response._links?.next?.href,

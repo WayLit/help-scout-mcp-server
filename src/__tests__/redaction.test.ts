@@ -1,10 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { OpenRedaction } from "openredaction";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   configureRedaction,
   isRedactionEnabled,
   redactAddressFields,
+  redactConversationList,
   redactCustomerFields,
+  redactOrganizationFields,
   redactText,
   redactThreadBodies,
 } from "../redaction";
@@ -49,13 +52,21 @@ describe("redactText", () => {
     const original = "Reach me at jane@acme.com tomorrow";
     expect(await redactText(original)).toBe(original);
   });
+
+  it("fails closed — throws rather than returning unredacted text when the detector errors", async () => {
+    const spy = vi
+      .spyOn(OpenRedaction.prototype, "detect")
+      .mockRejectedValueOnce(new Error("detector exploded"));
+    await expect(redactText("jane@acme.com")).rejects.toThrow("PII redaction failed");
+    spy.mockRestore();
+  });
 });
 
 describe("redactCustomerFields", () => {
   beforeEach(() => configureRedaction({}));
 
-  it("replaces name and email with redaction tokens", () => {
-    const out = redactCustomerFields({
+  it("replaces name and email with redaction tokens", async () => {
+    const out = await redactCustomerFields({
       id: 1,
       firstName: "Jane",
       lastName: "Doe",
@@ -72,17 +83,28 @@ describe("redactCustomerFields", () => {
     expect(out.organizationId).toBe(42);
   });
 
-  it("ignores nullish PII fields", () => {
-    const out = redactCustomerFields({ id: 1, firstName: null, email: undefined });
+  it("ignores nullish PII fields", async () => {
+    const out = await redactCustomerFields({ id: 1, firstName: null, email: undefined });
     expect(out.firstName).toBeNull();
     expect(out.email).toBeUndefined();
   });
 
-  it("passes through when redaction disabled", () => {
+  it("passes through when redaction disabled", async () => {
     configureRedaction({ REDACT_PII: "false" });
-    const out = redactCustomerFields({ firstName: "Jane", email: "jane@acme.com" });
+    const out = await redactCustomerFields({ firstName: "Jane", email: "jane@acme.com" });
     expect(out.firstName).toBe("Jane");
     expect(out.email).toBe("jane@acme.com");
+  });
+
+  it("redacts free-text location/background but leaves jobTitle untouched", async () => {
+    const out = await redactCustomerFields({
+      jobTitle: "Support Manager at jane@acme.com's team",
+      location: "Reach me near jane@acme.com",
+      background: "Met at a conference, email jane@acme.com",
+    });
+    expect(out.jobTitle).toBe("Support Manager at jane@acme.com's team");
+    expect(out.location).not.toContain("jane@acme.com");
+    expect(out.background).not.toContain("jane@acme.com");
   });
 });
 
@@ -124,5 +146,54 @@ describe("redactThreadBodies", () => {
     const threads = [{ id: 1, body: "jane@acme.com" }];
     const out = await redactThreadBodies(threads);
     expect(out[0]?.body).toBe("jane@acme.com");
+  });
+});
+
+describe("redactConversationList", () => {
+  beforeEach(() => configureRedaction({}));
+
+  it("redacts both subject text and embedded customer", async () => {
+    const conversations = [
+      {
+        id: 1,
+        subject: "Refund for jane@acme.com order",
+        customer: { id: 1, firstName: "Jane", email: "jane@acme.com" },
+      },
+    ];
+    const out = await redactConversationList(conversations);
+    expect(out[0]?.subject).not.toContain("jane@acme.com");
+    expect(out[0]?.customer.firstName).toBe("[NAME_REDACTED]");
+  });
+
+  it("no-op when disabled", async () => {
+    configureRedaction({ REDACT_PII: "false" });
+    const conversations = [{ id: 1, subject: "jane@acme.com", customer: { firstName: "Jane" } }];
+    const out = await redactConversationList(conversations);
+    expect(out[0]?.subject).toBe("jane@acme.com");
+    expect(out[0]?.customer.firstName).toBe("Jane");
+  });
+});
+
+describe("redactOrganizationFields", () => {
+  beforeEach(() => configureRedaction({}));
+
+  it("tokenizes phones and redacts free-text note", async () => {
+    const out = await redactOrganizationFields({
+      id: 1,
+      name: "Acme Inc",
+      phones: ["+1 555-0100"],
+      note: "Call jane@acme.com about the contract",
+    });
+    expect(out.phones).toEqual(["[PHONE_REDACTED]"]);
+    expect(out.note).not.toContain("jane@acme.com");
+    // Non-PII fields preserved
+    expect(out.name).toBe("Acme Inc");
+  });
+
+  it("no-op when disabled", async () => {
+    configureRedaction({ REDACT_PII: "false" });
+    const out = await redactOrganizationFields({ phones: ["+1 555-0100"], note: "jane@acme.com" });
+    expect(out.phones).toEqual(["+1 555-0100"]);
+    expect(out.note).toBe("jane@acme.com");
   });
 });
