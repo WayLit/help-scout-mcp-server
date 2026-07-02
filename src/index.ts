@@ -28,6 +28,14 @@ import { HS_TOKENS_STORAGE_KEY } from "./types";
 
 const HELPSCOUT_TOKEN_URL = "https://api.helpscout.net/v2/oauth2/token";
 
+/**
+ * Trusted header carrying the OAuth-verified caller email from the serve()
+ * boundary into the session Durable Object. Stamped by `mcpApiHandler` (which
+ * overwrites any client-supplied copy) and checked in `HelpScoutMCP.fetch` to
+ * reject cross-identity reuse of a leaked/replayed `mcp-session-id`.
+ */
+const VERIFIED_EMAIL_HEADER = "x-hs-verified-email";
+
 export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
   server = new McpServer({
     name: "helpscout-mcp",
@@ -111,6 +119,29 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
     if (url.hostname === "internal") {
       return this.handleInternal(request, url);
     }
+
+    // Cross-identity guard. McpAgent binds this session DO to the first
+    // caller's identity in init() (email -> HelpScoutAPI -> user-DO token
+    // lookup) and does NOT re-run init() per request — `this.props` reflects
+    // the identity the DO was *activated* with, not the current request. The
+    // session DO is named by the client-supplied `mcp-session-id`, so a leaked
+    // or replayed session id could otherwise let a different (also Access-
+    // authenticated) user drive tool calls against the original user's Help
+    // Scout tokens and cached PII while the DO is still warm. mcpApiHandler
+    // stamps the OAuth-verified caller email into VERIFIED_EMAIL_HEADER; refuse
+    // the request if it does not match the identity this DO was bound to.
+    const verifiedEmail = request.headers.get(VERIFIED_EMAIL_HEADER);
+    const boundEmail = this.props?.email;
+    if (verifiedEmail && boundEmail && verifiedEmail !== boundEmail) {
+      logger.warn("mcp session identity mismatch — refusing cross-identity reuse", {
+        boundEmail,
+        verifiedEmail,
+      });
+      return new Response("Session does not belong to the authenticated identity", {
+        status: 403,
+      });
+    }
+
     // Anything else falls through to the McpAgent base (handles /mcp).
     return super.fetch(request);
   }
@@ -227,13 +258,39 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
   }
 }
 
+const mcpServeHandler = HelpScoutMCP.serve("/mcp");
+
+/**
+ * Wraps McpAgent.serve() to stamp the OAuth-verified caller identity into a
+ * trusted request header before the SDK routes to the session DO. The
+ * OAuthProvider has already verified the bearer token and exposes the decrypted
+ * identity on `ctx.props`; we forward `ctx.props.email` (overwriting any
+ * client-supplied copy of the header) so `HelpScoutMCP.fetch` can reject a
+ * session id presented under a different identity than the one it was bound to.
+ */
+const mcpApiHandler = {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext & { props?: Props },
+  ): Promise<Response> {
+    const headers = new Headers(request.headers);
+    headers.delete(VERIFIED_EMAIL_HEADER);
+    const email = ctx.props?.email;
+    if (email) {
+      headers.set(VERIFIED_EMAIL_HEADER, email);
+    }
+    return mcpServeHandler.fetch(new Request(request, { headers }), env, ctx);
+  },
+};
+
 export default new OAuthProvider({
   apiRoute: "/mcp",
   // McpAgent.serve() returns a fetch handler suitable for apiHandler.
   // Cast is needed because the OAuthProvider generic signature expects
   // an ExportedHandler-like type but accepts Worker entrypoints.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  apiHandler: HelpScoutMCP.serve("/mcp") as any,
+  apiHandler: mcpApiHandler as any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   defaultHandler: AuthHandler as any,
   authorizeEndpoint: "/authorize",

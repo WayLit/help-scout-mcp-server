@@ -113,8 +113,42 @@ export function redactCustomerFields<T extends object>(customer: T): T {
   if (typeof out.firstName === "string" && out.firstName) out.firstName = "[NAME_REDACTED]";
   if (typeof out.lastName === "string" && out.lastName) out.lastName = "[NAME_REDACTED]";
   if (typeof out.email === "string" && out.email) out.email = "[EMAIL_REDACTED]";
+  // `primaryEmail` is a synthetic field listCustomers lifts out of _embedded.emails.
+  if (typeof out.primaryEmail === "string" && out.primaryEmail) out.primaryEmail = "[EMAIL_REDACTED]";
   if (typeof out.phone === "string" && out.phone) out.phone = "[PHONE_REDACTED]";
   return out as T;
+}
+
+/**
+ * Redact the embedded `customer` field on each conversation-shaped record so
+ * list/search results don't leak names/emails into LLM context or logs. Returns
+ * a new array; records without a customer object pass through untouched.
+ */
+export function redactConversationCustomers<T extends { customer?: unknown }>(items: T[]): T[] {
+  if (!enabled) return items;
+  return items.map((item) =>
+    item && typeof item.customer === "object" && item.customer
+      ? { ...item, customer: redactCustomerFields(item.customer as object) }
+      : item,
+  );
+}
+
+/** Redact a list of customer-shaped records (customer search/list tools). */
+export function redactCustomerList<T extends object>(customers: T[]): T[] {
+  if (!enabled) return customers;
+  return customers.map((c) => redactCustomerFields(c));
+}
+
+/**
+ * Tokenize the `value` of each Help Scout contact record (email/phone/chat/
+ * social/website). The value IS the PII, so swap it for a constant token
+ * rather than running the pattern detector over a one-field string.
+ */
+export function redactContactValues<T extends { value?: unknown }>(items: T[], token: string): T[] {
+  if (!enabled) return items;
+  return items.map((item) =>
+    typeof item.value === "string" && item.value ? { ...item, value: token } : item,
+  );
 }
 
 /** Redact a Help Scout address-shaped object's location fields. */
