@@ -9,7 +9,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "helpscout-mcp",
   "main": "src/index.ts",
-  "compatibility_date": "2025-04-10",
+  "compatibility_date": "2026-05-25",
   "compatibility_flags": ["nodejs_compat"],
   "kv_namespaces": [
     {
@@ -24,9 +24,18 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HelpScoutMCP"] }],
   "observability": { "enabled": true },
   "dev": { "port": 8788 },
+  // Polyfill node:module so packages that call createRequire(import.meta.url)
+  // as a CJS shim (e.g. openredaction) don't blow up at Workers validation
+  // time. The shim is never actually invoked at runtime.
+  "alias": {
+    "node:module": "./src/polyfills/node-module.ts"
+  },
   // The hostname's zone must be a Cloudflare-managed zone on this account
   // before deploy. `custom_domain: true` provisions DNS automatically.
   "routes": [
     { "pattern": "helpscout-mcp.example.com", "custom_domain": true }
-  ]
+  ],
+  "vars": {
+    "OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai"
+  }
 }

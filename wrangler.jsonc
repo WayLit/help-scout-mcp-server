@@ -1,48 +1,62 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "helpscout-mcp",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-05-25",
-  "compatibility_flags": ["nodejs_compat"],
-  // OAUTH_KV stores transient OAuth state (10-minute TTL).
-  // Help Scout per-user tokens live in DO storage on HelpScoutMCP, not here.
-  // Create with: wrangler kv namespace create OAUTH_KV
-  // Create preview: wrangler kv namespace create OAUTH_KV --preview
-  "kv_namespaces": [
-    {
-      "binding": "OAUTH_KV",
-      "id": "332e974fbe31423d8bfa7e87e6fb5b1a",
-      "preview_id": "8dcfe0bf18b046bbac289d71b7449acb"
-    }
-  ],
-  "durable_objects": {
-    "bindings": [
-      { "name": "MCP_OBJECT", "class_name": "HelpScoutMCP" }
-    ]
-  },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["HelpScoutMCP"] }
-  ],
-  "observability": { "enabled": true },
-  "dev": { "port": 8788 },
-  // Polyfill node:module so packages that call createRequire(import.meta.url)
-  // as a CJS shim (e.g. openredaction) don't blow up at Workers validation
-  // time. The shim is never actually invoked at runtime.
-  "alias": {
-    "node:module": "./src/polyfills/node-module.ts"
-  },
-  "routes": [
-    { "pattern": "helpscout-mcp.waylit.ai", "custom_domain": true }
-  ]
-  // No `routes` here — by default this worker deploys to `*.workers.dev`.
-  // To use a custom domain, copy `wrangler.custom.jsonc.example` →
-  // `wrangler.custom.jsonc` (gitignored), edit it, and deploy with:
-  //   wrangler deploy --config wrangler.custom.jsonc
-  // Secrets (set via `wrangler secret put <NAME>`):
-  //   HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET
-  //   CF_ACCESS_TEAM_DOMAIN  (e.g. "acme" for acme.cloudflareaccess.com)
-  //   CF_ACCESS_AUD          (Application Audience tag from the Access app)
-  //
-  // Removed in Phase 2 once Cloudflare Access replaces the Google leg:
-  //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, COOKIE_ENCRYPTION_KEY
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "helpscout-mcp",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-05-25",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// OAUTH_KV stores transient OAuth state (10-minute TTL).
+	// Help Scout per-user tokens live in DO storage on HelpScoutMCP, not here.
+	// Create with: wrangler kv namespace create OAUTH_KV
+	// Create preview: wrangler kv namespace create OAUTH_KV --preview
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "REPLACE_WITH_KV_NAMESPACE_ID",
+			"preview_id": "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MCP_OBJECT",
+				"class_name": "HelpScoutMCP"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"HelpScoutMCP"
+			]
+		}
+	],
+	"observability": {
+		"enabled": true
+	},
+	"dev": {
+		"port": 8788
+	},
+	// Polyfill node:module so packages that call createRequire(import.meta.url)
+	// as a CJS shim (e.g. openredaction) don't blow up at Workers validation
+	// time. The shim is never actually invoked at runtime.
+	"alias": {
+		"node:module": "./src/polyfills/node-module.ts"
+	},
+	"vars": {
+		"OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai"
+	}
+	// No `routes` here — by default this worker deploys to `*.workers.dev`.
+	// To use a custom domain, copy `wrangler.custom.jsonc.example` →
+	// `wrangler.custom.jsonc` (gitignored), edit it, and deploy with:
+	//   wrangler deploy --config wrangler.custom.jsonc
+	// Secrets (set via `wrangler secret put <NAME>`):
+	//   HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET
+	//   CF_ACCESS_TEAM_DOMAIN  (e.g. "acme" for acme.cloudflareaccess.com)
+	//   CF_ACCESS_AUD          (Application Audience tag from the Access app)
+	//
+	// Removed in Phase 2 once Cloudflare Access replaces the Google leg:
+	//   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, COOKIE_ENCRYPTION_KEY
 }
