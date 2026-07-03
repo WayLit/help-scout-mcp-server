@@ -38,22 +38,22 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "agents": "^0.17.0",
-    "hono": "^4.12.23",
+    "agents": "^0.17.1",
+    "hono": "^4.12.27",
     "jose": "^6.2.3",
     "openredaction": "^1.1.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260626.1",
-    "oxfmt": "^0.56.0",
-    "oxlint": "^1.71.0",
+    "@cloudflare/workers-types": "^4.20260630.1",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16",
+    "vite": "^8.1.0",
     "vitest": "^4.1.9",
     "wrangler": "^4.105.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.20.2"
   }
 }
