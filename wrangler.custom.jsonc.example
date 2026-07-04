@@ -11,11 +11,11 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-05-25",
   "compatibility_flags": ["nodejs_compat"],
+  // No `id` set: Wrangler's automatic resource provisioning creates/links
+  // the namespace on first deploy and reuses it on every deploy after.
   "kv_namespaces": [
     {
-      "binding": "OAUTH_KV",
-      "id": "REPLACE_WITH_KV_NAMESPACE_ID",
-      "preview_id": "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+      "binding": "OAUTH_KV"
     }
   ],
   "durable_objects": {
