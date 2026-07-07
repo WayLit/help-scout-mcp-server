@@ -19,6 +19,8 @@ const EXPECTED_TOOL_NAMES = [
   "comprehensiveConversationSearch",
   "structuredConversationFilter",
   "updateConversationStatus",
+  "assignConversation",
+  "moveConversation",
   "getCustomer",
   "listCustomers",
   "searchCustomersByEmail",
@@ -447,6 +449,104 @@ describe("updateConversationStatus", () => {
     const payload = parseResult(result) as { error: string; tool: string };
     expect(payload.error).toBe("NOT_FOUND");
     expect(payload.tool).toBe("updateConversationStatus");
+  });
+});
+
+describe("assignConversation", () => {
+  it("issues a JSONPatch replace op for /assignTo and reports success", async () => {
+    const { api, tools } = setupServer();
+    api.patch.mockResolvedValue({});
+
+    const result = await tools.assignConversation.handler(
+      { conversationId: "12345", userId: 42 },
+      {},
+    );
+
+    expect(api.patch).toHaveBeenCalledWith("/conversations/12345", {
+      op: "replace",
+      path: "/assignTo",
+      value: 42,
+    });
+    const payload = parseResult(result) as {
+      success: boolean;
+      conversationId: string;
+      userId: number;
+    };
+    expect(result.isError).toBeFalsy();
+    expect(payload.success).toBe(true);
+    expect(payload.conversationId).toBe("12345");
+    expect(payload.userId).toBe(42);
+  });
+
+  it("issues a JSONPatch remove op for /assignTo when userId is omitted", async () => {
+    const { api, tools } = setupServer();
+    api.patch.mockResolvedValue({});
+
+    const result = await tools.assignConversation.handler({ conversationId: "12345" }, {});
+
+    expect(api.patch).toHaveBeenCalledWith("/conversations/12345", {
+      op: "remove",
+      path: "/assignTo",
+    });
+    const payload = parseResult(result) as { success: boolean; conversationId: string };
+    expect(result.isError).toBeFalsy();
+    expect(payload.success).toBe(true);
+    expect(payload.conversationId).toBe("12345");
+  });
+
+  it("surfaces a Help Scout API error as an isError result", async () => {
+    const { api, tools } = setupServer();
+    api.patch.mockRejectedValue(new HelpScoutApiError("NOT_FOUND", "no such conversation", 404));
+
+    const result = await tools.assignConversation.handler(
+      { conversationId: "99999", userId: 1 },
+      {},
+    );
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error: string; tool: string };
+    expect(payload.error).toBe("NOT_FOUND");
+    expect(payload.tool).toBe("assignConversation");
+  });
+});
+
+describe("moveConversation", () => {
+  it("issues a JSONPatch move op for /mailboxId and reports success", async () => {
+    const { api, tools } = setupServer();
+    api.patch.mockResolvedValue({});
+
+    const result = await tools.moveConversation.handler(
+      { conversationId: "12345", mailboxId: 456 },
+      {},
+    );
+
+    expect(api.patch).toHaveBeenCalledWith("/conversations/12345", {
+      op: "move",
+      path: "/mailboxId",
+      value: 456,
+    });
+    const payload = parseResult(result) as {
+      success: boolean;
+      conversationId: string;
+      mailboxId: number;
+    };
+    expect(result.isError).toBeFalsy();
+    expect(payload.success).toBe(true);
+    expect(payload.conversationId).toBe("12345");
+    expect(payload.mailboxId).toBe(456);
+  });
+
+  it("surfaces a Help Scout API error as an isError result", async () => {
+    const { api, tools } = setupServer();
+    api.patch.mockRejectedValue(new HelpScoutApiError("NOT_FOUND", "no such conversation", 404));
+
+    const result = await tools.moveConversation.handler(
+      { conversationId: "99999", mailboxId: 456 },
+      {},
+    );
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error: string; tool: string };
+    expect(payload.error).toBe("NOT_FOUND");
+    expect(payload.tool).toBe("moveConversation");
   });
 });
 

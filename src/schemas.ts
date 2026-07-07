@@ -123,6 +123,21 @@ export const UpdateConversationStatusShape = {
     .describe("New conversation status"),
 };
 
+export const AssignConversationShape = {
+  conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
+  userId: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe("Help Scout user ID to assign the conversation to. Omit to unassign."),
+};
+
+export const MoveConversationShape = {
+  conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
+  mailboxId: z.number().int().min(0).describe("Target mailbox ID to move the conversation to"),
+};
+
 // ── Customer tools ─────────────────────────────────────────────────────────
 
 export const GetCustomerShape = {

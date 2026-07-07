@@ -30,6 +30,7 @@ import {
 } from "./redaction";
 import {
   AdvancedConversationSearchShape,
+  AssignConversationShape,
   ComprehensiveConversationSearchShape,
   Conversation,
   Customer,
@@ -46,6 +47,7 @@ import {
   ListAllInboxesShape,
   ListCustomersShape,
   ListOrganizationsShape,
+  MoveConversationShape,
   Organization,
   SearchConversationsShape,
   SearchCustomersByEmailShape,
@@ -1014,6 +1016,65 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         });
       } catch (err) {
         return errorResult(err, "updateConversationStatus", api.userEmail);
+      }
+    },
+  );
+
+  // ── assignConversation ───────────────────────────────────────────────
+  server.tool(
+    "assignConversation",
+    "Assign a conversation to a Help Scout user, or unassign it by omitting userId. This is a write operation that modifies the ticket in Help Scout.",
+    AssignConversationShape,
+    async (input): Promise<CallToolResult> => {
+      try {
+        if (input.userId === undefined) {
+          await api.patch(`/conversations/${input.conversationId}`, {
+            op: "remove",
+            path: "/assignTo",
+          });
+          return textResult({
+            success: true,
+            conversationId: input.conversationId,
+            message: `Conversation ${input.conversationId} has been unassigned.`,
+          });
+        }
+        await api.patch(`/conversations/${input.conversationId}`, {
+          op: "replace",
+          path: "/assignTo",
+          value: input.userId,
+        });
+        return textResult({
+          success: true,
+          conversationId: input.conversationId,
+          userId: input.userId,
+          message: `Conversation ${input.conversationId} assigned to user ${input.userId}.`,
+        });
+      } catch (err) {
+        return errorResult(err, "assignConversation", api.userEmail);
+      }
+    },
+  );
+
+  // ── moveConversation ─────────────────────────────────────────────────
+  server.tool(
+    "moveConversation",
+    "Move a conversation to a different mailbox (inbox). This is a write operation that modifies the ticket in Help Scout.",
+    MoveConversationShape,
+    async (input): Promise<CallToolResult> => {
+      try {
+        await api.patch(`/conversations/${input.conversationId}`, {
+          op: "move",
+          path: "/mailboxId",
+          value: input.mailboxId,
+        });
+        return textResult({
+          success: true,
+          conversationId: input.conversationId,
+          mailboxId: input.mailboxId,
+          message: `Conversation ${input.conversationId} moved to mailbox ${input.mailboxId}.`,
+        });
+      } catch (err) {
+        return errorResult(err, "moveConversation", api.userEmail);
       }
     },
   );
