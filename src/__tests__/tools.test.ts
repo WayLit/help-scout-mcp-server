@@ -295,7 +295,7 @@ describe("PII redaction in read tools", () => {
     configureRedaction({ REDACT_PII: "true" } as never);
   });
 
-  it("tokenizes embedded customer fields in conversation search results", async () => {
+  it("tokenizes embedded customer email but leaves names intact in conversation search results", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue({
       _embedded: {
@@ -317,8 +317,8 @@ describe("PII redaction in read tools", () => {
     const payload = parseResult(result) as {
       results: Array<{ customer: { firstName: string; lastName: string; email: string } }>;
     };
-    expect(payload.results[0].customer.firstName).toBe("[NAME_REDACTED]");
-    expect(payload.results[0].customer.lastName).toBe("[NAME_REDACTED]");
+    expect(payload.results[0].customer.firstName).toBe("Ada");
+    expect(payload.results[0].customer.lastName).toBe("Lovelace");
     expect(payload.results[0].customer.email).toBe("[EMAIL_REDACTED]");
   });
 
@@ -358,7 +358,7 @@ describe("PII redaction in read tools", () => {
     expect(payload.address.lines[0]).toBe("[ADDRESS_REDACTED]");
   });
 
-  it("tokenizes primaryEmail and names in listCustomers results", async () => {
+  it("tokenizes primaryEmail but leaves names intact in listCustomers results", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue({
       _embedded: {
@@ -381,8 +381,8 @@ describe("PII redaction in read tools", () => {
     const payload = parseResult(result) as {
       results: Array<{ firstName: string; lastName: string; primaryEmail: string }>;
     };
-    expect(payload.results[0].firstName).toBe("[NAME_REDACTED]");
-    expect(payload.results[0].lastName).toBe("[NAME_REDACTED]");
+    expect(payload.results[0].firstName).toBe("Ada");
+    expect(payload.results[0].lastName).toBe("Lovelace");
     expect(payload.results[0].primaryEmail).toBe("[EMAIL_REDACTED]");
   });
 

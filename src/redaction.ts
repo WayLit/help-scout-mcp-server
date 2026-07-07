@@ -27,6 +27,11 @@ function getRedactor(): OpenRedaction {
       // out clearly-PII matches like emails in support prose.
       confidenceThreshold: 0.5,
       enableContextAnalysis: true,
+      // Names are left in place — redacting them made ticket data much less
+      // useful for triage/reporting (who filed it, who's assigned) without a
+      // corresponding privacy win, since names alone aren't very identifying
+      // without the email/phone/address they're paired with.
+      includeNames: false,
       // Customer-supplied terms that should never be redacted. Add internal
       // product names / domains here if any leak through.
       whitelist: [],
@@ -105,17 +110,16 @@ export async function redactThreadBodies<T extends { body?: string }>(threads: T
 
 /**
  * Redact a Help Scout customer-shaped object's PII fields.
- * name/email/phone are literal token replacement — those fields ARE the PII,
+ * email/phone are literal token replacement — those fields ARE the PII,
  * no detection step needed. `location`/`background` are free text (bio-like
- * fields that can embed names/addresses/etc.) so they get a detector pass.
- * `jobTitle` is deliberately left untouched — it's useful context for
- * answering tickets and isn't itself PII.
+ * fields that can embed addresses/etc.) so they get a detector pass.
+ * `firstName`/`lastName`/`jobTitle` are deliberately left untouched — names
+ * are useful context for triage/reporting and aren't redacted anywhere in
+ * this module (see `includeNames: false` on the detector).
  */
 export async function redactCustomerFields<T extends object>(customer: T): Promise<T> {
   if (!enabled) return customer;
   const out = { ...customer } as Record<string, unknown>;
-  if (typeof out.firstName === "string" && out.firstName) out.firstName = "[NAME_REDACTED]";
-  if (typeof out.lastName === "string" && out.lastName) out.lastName = "[NAME_REDACTED]";
   if (typeof out.email === "string" && out.email) out.email = "[EMAIL_REDACTED]";
   // `primaryEmail` is a synthetic field listCustomers lifts out of _embedded.emails.
   if (typeof out.primaryEmail === "string" && out.primaryEmail) out.primaryEmail = "[EMAIL_REDACTED]";
@@ -151,19 +155,26 @@ export async function redactCustomerList<T extends object>(customers: T[]): Prom
 }
 
 /**
- * Redact both the free-text `subject` and embedded `customer` of each
- * conversation-shaped record. Subject lines routinely carry PII (names,
- * order/account details) same as thread bodies, so they need a detector
- * pass — the customer-field token swap alone isn't enough.
+ * Redact the free-text `subject`, `preview`, and embedded `customer` of each
+ * conversation-shaped record. Subject lines and the list-view `preview`
+ * snippet (Help Scout's last-message excerpt) routinely carry PII (names,
+ * order/account details) same as thread bodies, so both need a detector
+ * pass — the customer-field token swap alone isn't enough. `preview` isn't
+ * in our typed Conversation shape but the raw Help Scout API response
+ * includes it, and callers can pull it through via `fields` selection, so it
+ * must be redacted here rather than relying on it being dropped.
  */
 export async function redactConversationList<
-  T extends { subject?: string; customer?: unknown },
+  T extends { subject?: string; preview?: string; customer?: unknown },
 >(items: T[]): Promise<T[]> {
   if (!enabled) return items;
   const withCustomer = await redactConversationCustomers(items);
   for (const item of withCustomer) {
     if (typeof item.subject === "string" && item.subject) {
       item.subject = await redactText(item.subject);
+    }
+    if (typeof item.preview === "string" && item.preview) {
+      item.preview = await redactText(item.preview);
     }
   }
   return withCustomer;
