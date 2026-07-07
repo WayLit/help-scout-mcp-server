@@ -172,6 +172,19 @@ describe("redactConversationList", () => {
     expect(out[0]?.subject).toBe("jane@acme.com");
     expect(out[0]?.customer.firstName).toBe("Jane");
   });
+
+  it("redacts the preview snippet when present", async () => {
+    const conversations = [
+      {
+        id: 1,
+        subject: "Address update",
+        preview: "Hi, this is Jane Smith, please update my address to jane@acme.com",
+        customer: { id: 1, firstName: "Jane", email: "jane@acme.com" },
+      },
+    ];
+    const out = await redactConversationList(conversations);
+    expect(out[0]?.preview).not.toContain("jane@acme.com");
+  });
 });
 
 describe("redactOrganizationFields", () => {

@@ -151,19 +151,26 @@ export async function redactCustomerList<T extends object>(customers: T[]): Prom
 }
 
 /**
- * Redact both the free-text `subject` and embedded `customer` of each
- * conversation-shaped record. Subject lines routinely carry PII (names,
- * order/account details) same as thread bodies, so they need a detector
- * pass — the customer-field token swap alone isn't enough.
+ * Redact the free-text `subject`, `preview`, and embedded `customer` of each
+ * conversation-shaped record. Subject lines and the list-view `preview`
+ * snippet (Help Scout's last-message excerpt) routinely carry PII (names,
+ * order/account details) same as thread bodies, so both need a detector
+ * pass — the customer-field token swap alone isn't enough. `preview` isn't
+ * in our typed Conversation shape but the raw Help Scout API response
+ * includes it, and callers can pull it through via `fields` selection, so it
+ * must be redacted here rather than relying on it being dropped.
  */
 export async function redactConversationList<
-  T extends { subject?: string; customer?: unknown },
+  T extends { subject?: string; preview?: string; customer?: unknown },
 >(items: T[]): Promise<T[]> {
   if (!enabled) return items;
   const withCustomer = await redactConversationCustomers(items);
   for (const item of withCustomer) {
     if (typeof item.subject === "string" && item.subject) {
       item.subject = await redactText(item.subject);
+    }
+    if (typeof item.preview === "string" && item.preview) {
+      item.preview = await redactText(item.preview);
     }
   }
   return withCustomer;
