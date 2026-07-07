@@ -178,6 +178,47 @@ function formatInboxScope(inboxId?: string): string {
   return inboxId ? `Specific inbox: ${inboxId}` : "ALL inboxes";
 }
 
+/**
+ * Resolve a `cursor` input for `/conversations` pagination. Accepts either a
+ * plain page number (e.g. "2") or the full page URL previously returned as
+ * `nextCursor` (a Help Scout `_links.next.href`). Without this, `page`
+ * silently stayed hardcoded at 1 regardless of what was passed as cursor.
+ */
+function resolveCursorPage(cursor: string | undefined): { page?: number; url?: string } {
+  if (!cursor) return {};
+  if (/^https?:\/\//.test(cursor)) {
+    // The resolved URL is fetched with the caller's Help Scout OAuth token
+    // attached (see HelpScoutAPI.get) — validate host/scheme/path exactly
+    // (not startsWith/includes on the raw string) so a malicious cursor can't
+    // redirect that token to an attacker-controlled or internal host (SSRF).
+    let parsed: URL;
+    try {
+      parsed = new URL(cursor);
+    } catch {
+      throw new HelpScoutApiError("INVALID_INPUT", `Invalid cursor URL: "${cursor}".`);
+    }
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "api.helpscout.net" ||
+      !parsed.pathname.startsWith("/v2/conversations")
+    ) {
+      throw new HelpScoutApiError(
+        "INVALID_INPUT",
+        `Invalid cursor URL: "${cursor}". Must be an https://api.helpscout.net/v2/conversations link, e.g. a nextCursor from a previous response.`,
+      );
+    }
+    return { url: cursor };
+  }
+  const page = Number(cursor);
+  if (!Number.isInteger(page) || page < 1) {
+    throw new HelpScoutApiError(
+      "INVALID_INPUT",
+      `Invalid cursor: "${cursor}". Expected a page number (e.g. "2") or the full URL from a previous response's nextCursor.`,
+    );
+  }
+  return { page };
+}
+
 function buildFilteredPagination(
   filteredCount: number,
   apiPage: { totalElements?: number } | undefined,
@@ -274,8 +315,16 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
     SearchConversationsShape,
     async (input): Promise<CallToolResult> => {
       try {
+        const { page: cursorPage, url: cursorUrl } = resolveCursorPage(input.cursor);
+        if (cursorUrl && !input.status) {
+          throw new HelpScoutApiError(
+            "INVALID_INPUT",
+            "A page-URL cursor requires `status` to be set — the default multi-status search merges two independently-paginated requests and can't resume from a single URL. Pass a plain page number instead, or set `status`.",
+          );
+        }
+
         const baseParams: Record<string, unknown> = {
-          page: 1,
+          page: cursorPage ?? 1,
           size: input.limit,
           sortField: input.sort,
           sortOrder: input.order,
@@ -296,15 +345,19 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         let conversations: Conversation[] = [];
         let searchedStatuses: string[];
         let pagination: unknown;
+        let nextCursor: string | undefined;
 
         if (input.status) {
-          const response = await api.get<PaginatedResponse<Conversation>>(
-            "/conversations",
-            { ...baseParams, status: input.status },
-          );
+          const response = cursorUrl
+            ? await api.get<PaginatedResponse<Conversation>>(cursorUrl)
+            : await api.get<PaginatedResponse<Conversation>>("/conversations", {
+                ...baseParams,
+                status: input.status,
+              });
           conversations = response._embedded?.conversations || [];
           searchedStatuses = [input.status];
           pagination = response.page;
+          nextCursor = response._links?.next?.href;
         } else {
           // Default excludes "closed" — closed tickets are usually noise for
           // "what's open right now" queries. Pass status:"closed" to search it.
@@ -323,6 +376,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           const failed: Array<{ status: string; message: string; code: string }> = [];
           const totalByStatus: Record<string, number> = {};
           let totalAvailable = 0;
+          let hasMorePages = false;
 
           for (const [i, r] of results.entries()) {
             if (r.status === "fulfilled") {
@@ -330,6 +384,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
               const statusTotal = r.value.page?.totalElements || 0;
               totalByStatus[statusName] = statusTotal;
               totalAvailable += statusTotal;
+              if ((r.value.page?.number ?? 0) + 1 < (r.value.page?.totalPages ?? 0)) {
+                hasMorePages = true;
+              }
               for (const c of r.value._embedded?.conversations || []) {
                 if (!seen.has(c.id)) {
                   seen.add(c.id);
@@ -374,6 +431,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
                 ? `[WARNING] ${failed.length} status(es) failed. Results incomplete.`
                 : `Merged results from ${Object.keys(totalByStatus).length} statuses. Returned ${conversations.length} of ${totalAvailable}.`,
           };
+          if (hasMorePages) {
+            nextCursor = String((cursorPage ?? 1) + 1);
+          }
         }
 
         // Client-side createdBefore filter — must rebuild pagination so
@@ -429,6 +489,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         return textResult({
           results: await redactConversationList(conversations),
           pagination,
+          nextCursor,
           searchInfo: {
             query: input.query,
             statusesSearched: searchedStatuses,
@@ -928,8 +989,10 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           );
         }
 
+        const { page: cursorPage, url: cursorUrl } = resolveCursorPage(input.cursor);
+
         const queryParams: Record<string, unknown> = {
-          page: 1,
+          page: cursorPage ?? 1,
           size: input.limit,
           sortField: input.sortBy,
           sortOrder: input.sortOrder,
@@ -952,10 +1015,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         );
         if (withDate) queryParams.query = withDate;
 
-        const response = await api.get<PaginatedResponse<Conversation>>(
-          "/conversations",
-          queryParams,
-        );
+        const response = cursorUrl
+          ? await api.get<PaginatedResponse<Conversation>>(cursorUrl)
+          : await api.get<PaginatedResponse<Conversation>>("/conversations", queryParams);
         let conversations = response._embedded?.conversations || [];
         let clientSideFiltered = false;
         const originalCount = conversations.length;

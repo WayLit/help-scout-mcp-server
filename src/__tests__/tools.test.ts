@@ -192,6 +192,203 @@ describe("searchConversations status defaults", () => {
   });
 });
 
+describe("searchConversations cursor pagination", () => {
+  const emptyPage = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
+
+  it("advances to the requested page for a numeric cursor with status set", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { status: "active", cursor: "3", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    const [, params] = api.get.mock.calls[0] as [string, Record<string, unknown>];
+    expect(params.page).toBe(3);
+  });
+
+  it("fetches the page URL directly for a URL cursor with status set", async () => {
+    const { api, tools } = setupServer();
+    const nextHref = "https://api.helpscout.net/v2/conversations?page=2&status=active";
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { status: "active", cursor: nextHref, limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenCalledWith(nextHref);
+  });
+
+  it("rejects a URL cursor when status is not set (ambiguous multi-status merge)", async () => {
+    const { tools } = setupServer();
+    const nextHref = "https://api.helpscout.net/v2/conversations?page=2";
+
+    const result = await tools.searchConversations.handler(
+      { cursor: nextHref, limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+  });
+
+  it("rejects a non-numeric, non-URL cursor", async () => {
+    const { tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      { status: "active", cursor: "not-a-page", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+  });
+
+  it("rejects a cursor URL pointing at a non-Help Scout host (SSRF)", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "active",
+        cursor: "https://attacker.example.com/steal?token=1",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cursor URL with a Help Scout-lookalike host (SSRF)", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "active",
+        cursor: "https://api.helpscout.net.attacker.com/v2/conversations?page=2",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("applies a numeric cursor to both parallel status calls in the default merge", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { cursor: "2", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    for (const call of api.get.mock.calls) {
+      const params = call[1] as Record<string, unknown>;
+      expect(params.page).toBe(2);
+    }
+  });
+
+  it("surfaces nextCursor from the API response for single-status search", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      _embedded: { conversations: [] },
+      page: { totalElements: 0 },
+      _links: { next: { href: "https://api.helpscout.net/v2/conversations?page=2" } },
+    });
+
+    const result = await tools.searchConversations.handler(
+      { status: "active", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { nextCursor?: string };
+    expect(payload.nextCursor).toBe("https://api.helpscout.net/v2/conversations?page=2");
+  });
+});
+
+describe("structuredConversationFilter cursor pagination", () => {
+  const page = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
+
+  it("advances to the requested page for a numeric cursor", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(page);
+
+    await tools.structuredConversationFilter.handler(
+      {
+        assignedTo: 1,
+        cursor: "4",
+        status: "all",
+        sortBy: "createdAt",
+        sortOrder: "desc",
+        limit: 50,
+      },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    const [, params] = api.get.mock.calls[0] as [string, Record<string, unknown>];
+    expect(params.page).toBe(4);
+  });
+
+  it("fetches the page URL directly for a URL cursor", async () => {
+    const { api, tools } = setupServer();
+    const nextHref = "https://api.helpscout.net/v2/conversations?page=2&assigned_to=1";
+    api.get.mockResolvedValue(page);
+
+    await tools.structuredConversationFilter.handler(
+      {
+        assignedTo: 1,
+        cursor: nextHref,
+        status: "all",
+        sortBy: "createdAt",
+        sortOrder: "desc",
+        limit: 50,
+      },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenCalledWith(nextHref);
+  });
+
+  it("rejects a non-numeric, non-URL cursor", async () => {
+    const { tools } = setupServer();
+
+    const result = await tools.structuredConversationFilter.handler(
+      {
+        assignedTo: 1,
+        cursor: "bogus",
+        status: "all",
+        sortBy: "createdAt",
+        sortOrder: "desc",
+        limit: 50,
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+  });
+});
+
 describe("draftReply", () => {
   it("returns a brief with the latest customer message and resolved prior history", async () => {
     const { api, tools } = setupServer();
