@@ -186,7 +186,29 @@ function formatInboxScope(inboxId?: string): string {
  */
 function resolveCursorPage(cursor: string | undefined): { page?: number; url?: string } {
   if (!cursor) return {};
-  if (/^https?:\/\//.test(cursor)) return { url: cursor };
+  if (/^https?:\/\//.test(cursor)) {
+    // The resolved URL is fetched with the caller's Help Scout OAuth token
+    // attached (see HelpScoutAPI.get) — validate host/scheme/path exactly
+    // (not startsWith/includes on the raw string) so a malicious cursor can't
+    // redirect that token to an attacker-controlled or internal host (SSRF).
+    let parsed: URL;
+    try {
+      parsed = new URL(cursor);
+    } catch {
+      throw new HelpScoutApiError("INVALID_INPUT", `Invalid cursor URL: "${cursor}".`);
+    }
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "api.helpscout.net" ||
+      !parsed.pathname.startsWith("/v2/conversations")
+    ) {
+      throw new HelpScoutApiError(
+        "INVALID_INPUT",
+        `Invalid cursor URL: "${cursor}". Must be an https://api.helpscout.net/v2/conversations link, e.g. a nextCursor from a previous response.`,
+      );
+    }
+    return { url: cursor };
+  }
   const page = Number(cursor);
   if (!Number.isInteger(page) || page < 1) {
     throw new HelpScoutApiError(

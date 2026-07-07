@@ -250,6 +250,46 @@ describe("searchConversations cursor pagination", () => {
     expect(payload.error).toBe("INVALID_INPUT");
   });
 
+  it("rejects a cursor URL pointing at a non-Help Scout host (SSRF)", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "active",
+        cursor: "https://attacker.example.com/steal?token=1",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cursor URL with a Help Scout-lookalike host (SSRF)", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "active",
+        cursor: "https://api.helpscout.net.attacker.com/v2/conversations?page=2",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
   it("applies a numeric cursor to both parallel status calls in the default merge", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue(emptyPage);
