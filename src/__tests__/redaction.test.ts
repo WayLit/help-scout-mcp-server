@@ -65,7 +65,7 @@ describe("redactText", () => {
 describe("redactCustomerFields", () => {
   beforeEach(() => configureRedaction({}));
 
-  it("replaces name and email with redaction tokens", async () => {
+  it("replaces email/phone with redaction tokens but leaves names intact", async () => {
     const out = await redactCustomerFields({
       id: 1,
       firstName: "Jane",
@@ -74,8 +74,8 @@ describe("redactCustomerFields", () => {
       phone: "+1 555-0100",
       organizationId: 42,
     });
-    expect(out.firstName).toBe("[NAME_REDACTED]");
-    expect(out.lastName).toBe("[NAME_REDACTED]");
+    expect(out.firstName).toBe("Jane");
+    expect(out.lastName).toBe("Doe");
     expect(out.email).toBe("[EMAIL_REDACTED]");
     expect(out.phone).toBe("[PHONE_REDACTED]");
     // Non-PII fields preserved
@@ -152,7 +152,7 @@ describe("redactThreadBodies", () => {
 describe("redactConversationList", () => {
   beforeEach(() => configureRedaction({}));
 
-  it("redacts both subject text and embedded customer", async () => {
+  it("redacts subject text and embedded customer email, leaves name intact", async () => {
     const conversations = [
       {
         id: 1,
@@ -162,7 +162,8 @@ describe("redactConversationList", () => {
     ];
     const out = await redactConversationList(conversations);
     expect(out[0]?.subject).not.toContain("jane@acme.com");
-    expect(out[0]?.customer.firstName).toBe("[NAME_REDACTED]");
+    expect(out[0]?.customer.firstName).toBe("Jane");
+    expect(out[0]?.customer.email).toBe("[EMAIL_REDACTED]");
   });
 
   it("no-op when disabled", async () => {

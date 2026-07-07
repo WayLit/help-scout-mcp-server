@@ -27,6 +27,11 @@ function getRedactor(): OpenRedaction {
       // out clearly-PII matches like emails in support prose.
       confidenceThreshold: 0.5,
       enableContextAnalysis: true,
+      // Names are left in place — redacting them made ticket data much less
+      // useful for triage/reporting (who filed it, who's assigned) without a
+      // corresponding privacy win, since names alone aren't very identifying
+      // without the email/phone/address they're paired with.
+      includeNames: false,
       // Customer-supplied terms that should never be redacted. Add internal
       // product names / domains here if any leak through.
       whitelist: [],
@@ -105,17 +110,16 @@ export async function redactThreadBodies<T extends { body?: string }>(threads: T
 
 /**
  * Redact a Help Scout customer-shaped object's PII fields.
- * name/email/phone are literal token replacement — those fields ARE the PII,
+ * email/phone are literal token replacement — those fields ARE the PII,
  * no detection step needed. `location`/`background` are free text (bio-like
- * fields that can embed names/addresses/etc.) so they get a detector pass.
- * `jobTitle` is deliberately left untouched — it's useful context for
- * answering tickets and isn't itself PII.
+ * fields that can embed addresses/etc.) so they get a detector pass.
+ * `firstName`/`lastName`/`jobTitle` are deliberately left untouched — names
+ * are useful context for triage/reporting and aren't redacted anywhere in
+ * this module (see `includeNames: false` on the detector).
  */
 export async function redactCustomerFields<T extends object>(customer: T): Promise<T> {
   if (!enabled) return customer;
   const out = { ...customer } as Record<string, unknown>;
-  if (typeof out.firstName === "string" && out.firstName) out.firstName = "[NAME_REDACTED]";
-  if (typeof out.lastName === "string" && out.lastName) out.lastName = "[NAME_REDACTED]";
   if (typeof out.email === "string" && out.email) out.email = "[EMAIL_REDACTED]";
   // `primaryEmail` is a synthetic field listCustomers lifts out of _embedded.emails.
   if (typeof out.primaryEmail === "string" && out.primaryEmail) out.primaryEmail = "[EMAIL_REDACTED]";
