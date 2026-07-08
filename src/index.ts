@@ -353,7 +353,7 @@ export class HelpScoutDocsMCP extends McpAgent<Env, Record<string, never>, Props
 }
 
 const mailboxServeHandler = HelpScoutMCP.serve("/mcp");
-const docsServeHandler = HelpScoutDocsMCP.serve("/docs/mcp");
+const docsServeHandler = HelpScoutDocsMCP.serve("/docs/mcp", { binding: "DOCS_MCP_OBJECT" });
 
 /**
  * Wraps McpAgent.serve() to stamp the OAuth-verified caller identity into a
