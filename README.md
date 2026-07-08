@@ -2,6 +2,10 @@
 
 Remote MCP server that fronts the Help Scout API for AI assistants. Per-user OAuth, Cloudflare Access for employee identity, Durable Object per session.
 
+Two connectors, one worker:
+- **`/mcp`** — mailboxes, conversations, customers, organizations (per-user Help Scout OAuth).
+- **`/docs/mcp`** — Help Scout Docs (knowledge base) collections and articles, read **and write** — for finding and fixing stale articles. Auth is a personal Docs API key (Profile → My API Keys in Help Scout), entered once through a short web form; see [Docs MCP](#docs-mcp) below.
+
 > **Deploying for the first time?** See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for an end-to-end checklist.
 
 Run all commands from the repo root.
@@ -27,22 +31,22 @@ wrangler kv namespace create OAUTH_KV --preview
 
 Paste the returned IDs into `wrangler.jsonc` (`id` and `preview_id`).
 
-### 2. Cloudflare Access on the `/authorize` endpoint
+### 2. Cloudflare Access on the browser-interactive endpoints
 
-Cloudflare Access handles employee identity. Scope it to the worker's **`/authorize` endpoint only** — that's the one browser-interactive step where the worker reads the verified email from the Access JWT. The MCP endpoints (`/mcp`, `/token`) are left un-fronted because they're protected by the OAuth bearer token the worker issues *after* `/authorize`, and `/callback/helpscout` is guarded by its one-time OAuth state token. Scoping to `/authorize` is what lets MCP clients log in through an ordinary browser flow instead of carrying a pre-shared service token.
+Cloudflare Access handles employee identity. Scope it to the worker's **browser-interactive paths only** — `/authorize` (both connectors' OAuth entry), `/callback/helpscout` (the Help Scout OAuth redirect — the worker re-verifies the Access JWT here to bind the callback to the identity that started the flow, on top of the one-time OAuth state token), and `/docs-api-key/*` (the Docs API key entry/rotation form, gated separately since it's not part of the OAuth code path). The MCP endpoints (`/mcp`, `/docs/mcp`, `/token`) are left un-fronted because they're protected by the OAuth bearer token the worker issues *after* `/authorize`. Scoping this way is what lets MCP clients log in through an ordinary browser flow instead of carrying a pre-shared service token.
 
 Pick a hostname for your deployment (e.g. `helpscout-mcp.example.com`) and set it as the `routes` pattern in `wrangler.jsonc`. The rest of this section uses `<YOUR_HOSTNAME>` to mean that value.
 
 1. **Configure Google Workspace as an IdP** in Cloudflare Zero Trust → Settings → Authentication → Login methods → Add new → Google Workspace. Follow the connector wizard (one-time admin consent in Workspace).
-2. **Create a Self-hosted Access application** scoped to the authorize path:
-   - Application domain / path: `<YOUR_HOSTNAME>/authorize`
+2. **Create a Self-hosted Access application** scoped to the authorize + callback + docs-key paths:
+   - Application domain / path: `<YOUR_HOSTNAME>/authorize` — add a second path rule for `<YOUR_HOSTNAME>/callback/helpscout` and a third for `<YOUR_HOSTNAME>/docs-api-key/*` in the same app (or separate apps with an identical policy)
    - Identity providers: Google Workspace
-   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>` — this is your perimeter, still enforced on every login since identity only enters through `/authorize`
+   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>` — this is your perimeter, still enforced on every login since identity only enters through these paths
 3. **Capture two values** for worker secrets:
    - `CF_ACCESS_TEAM_DOMAIN` — your team subdomain, e.g. `acme` for `acme.cloudflareaccess.com`
    - `CF_ACCESS_AUD` — the Application Audience (AUD) tag from the Access app overview page
 
-> No service token is needed. Clients connect with no `CF-Access-*` headers; the browser OAuth flow carries identity. Verify after deploy: `curl -i https://<YOUR_HOSTNAME>/mcp` should return a 401 bearer challenge from the worker, **not** a Cloudflare Access login page (which would mean the app is still fronting the whole host).
+> No service token is needed. Clients connect with no `CF-Access-*` headers; the browser OAuth flow carries identity. Verify after deploy: `curl -i https://<YOUR_HOSTNAME>/mcp` and `curl -i https://<YOUR_HOSTNAME>/docs/mcp` should each return a 401 bearer challenge from the worker, **not** a Cloudflare Access login page (which would mean the app is still fronting the whole host).
 
 ### 3. Help Scout OAuth app
 
@@ -78,6 +82,21 @@ pnpm deploy
 
 To deploy under a custom domain, see [Custom domain](#custom-domain) below.
 
+## Docs MCP
+
+Add a second MCP connector in your client pointed at `https://<YOUR_HOSTNAME>/docs/mcp`. There's no Worker secret to configure — the Docs API key is **personal**, not account-wide, so each user provides their own.
+
+First connection flow:
+
+1. Client starts the OAuth handshake against `/docs/mcp` and hits `/authorize` same as the mailbox connector.
+2. Cloudflare Access verifies identity (same policy as above — must cover `/docs-api-key/*`).
+3. If this user has no Docs API key on file yet, the worker serves a short HTML form instead of redirecting to Help Scout: paste the key from Help Scout → your profile → **My API Keys**.
+4. The worker validates the key live against the Docs API, stores it in your per-user Durable Object (alongside your mailbox OAuth tokens — nothing is shared across users), and completes the OAuth grant.
+
+If Help Scout later revokes or you rotate the key, tool calls will start failing with `REAUTH_REQUIRED`. Visit `https://<YOUR_HOSTNAME>/docs-api-key/enter` directly (no need to redo the client's OAuth flow) to update it.
+
+Tools are read/write: `listCollections`, `getCollection`, `createCollection`, `updateCollection`, `deleteCollection`, `listArticles`, `searchArticles`, `getArticle`, `createArticle`, `updateArticle`, `deleteArticle`. New articles default to `status: notpublished` so drafts can be reviewed before going live — pass `status: "published"` explicitly to publish immediately.
+
 ## Local development
 
 `.dev.vars` (gitignored — copy from `.dev.vars.example`):
@@ -102,9 +121,9 @@ The Help Scout OAuth flow needs the redirect URI to be reachable. For local test
 
 ## Architecture
 
-- **Entry**: `src/index.ts` — `OAuthProvider` wrapping the `HelpScoutMCP` Durable Object.
-- **Auth**: Cloudflare Access (scoped to `/authorize`) verifies identity → JWT in `Cf-Access-Jwt-Assertion` → worker extracts email and completes the OAuth grant. The MCP client then holds a worker-issued bearer token for `/mcp` and `/token`. Help Scout authorization-code flow runs once per user (and re-runs on `invalid_grant`); each user's DO holds their HS tokens.
-- **Per-user isolation**: each user's HS tokens, cache, and inbox-discovery results live in their own Durable Object instance, keyed by email. No shared credentials.
+- **Entry**: `src/index.ts` — one `OAuthProvider` with two `apiHandlers`: `HelpScoutMCP` at `/mcp` and `HelpScoutDocsMCP` at `/docs/mcp`.
+- **Auth**: Cloudflare Access (scoped to `/authorize` and `/docs-api-key/*`) verifies identity → JWT in `Cf-Access-Jwt-Assertion` → worker extracts email and completes the OAuth grant. The MCP client then holds a worker-issued bearer token for `/mcp`, `/docs/mcp`, and `/token`. Help Scout authorization-code flow runs once per user for `/mcp` (and re-runs on `invalid_grant`); `/docs/mcp` instead collects a personal Docs API key once via a web form. Both credentials live in the same per-user DO.
+- **Per-user isolation**: each user's HS tokens, Docs API key, cache, and inbox-discovery results live in their own `MCP_OBJECT` Durable Object instance, keyed by email. `DOCS_MCP_OBJECT` holds only Docs MCP session state (transport + response cache) and RPCs into `MCP_OBJECT` by email for the stored key. No shared credentials.
 
 ## Troubleshooting
 

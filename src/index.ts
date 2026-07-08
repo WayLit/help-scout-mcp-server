@@ -16,7 +16,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { AuthHandler } from "./auth-handler";
 import { instrumentServerForAudit } from "./audit";
+import { registerDocsTools } from "./docs-tools";
 import { HelpScoutAPI } from "./helpscout-api";
+import { HelpScoutDocsAPI } from "./helpscout-docs-api";
 import { buildInstructions } from "./instructions";
 import { logger } from "./logger";
 import { registerPrompts } from "./prompts";
@@ -24,7 +26,7 @@ import { configureRedaction } from "./redaction";
 import { registerResources } from "./resources";
 import { registerTools } from "./tools";
 import type { Env, HelpScoutTokenRecord, Props } from "./types";
-import { HS_TOKENS_STORAGE_KEY } from "./types";
+import { HS_DOCS_KEY_STORAGE_KEY, HS_TOKENS_STORAGE_KEY } from "./types";
 
 const HELPSCOUT_TOKEN_URL = "https://api.helpscout.net/v2/oauth2/token";
 
@@ -113,6 +115,10 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
    *   POST /store-tokens     — body: HelpScoutTokenRecord
    *   GET  /has-valid-tokens — returns { valid: boolean }
    *   POST /clear-tokens     — wipe (used on REAUTH_REQUIRED)
+   *   POST /store-docs-key   — body: { apiKey: string }
+   *   GET  /has-docs-key     — returns { valid: boolean }
+   *   POST /clear-docs-key   — wipe (used on REAUTH_REQUIRED / rotation)
+   *   POST /get-docs-key     — returns { apiKey } or 401 { code: "REAUTH_REQUIRED" }
    */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -170,6 +176,33 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
     if (url.pathname === "/get-access-token" && request.method === "POST") {
       const body = (await request.json().catch(() => ({}))) as { forceRefresh?: boolean };
       return this.handleGetAccessToken(Boolean(body?.forceRefresh));
+    }
+
+    if (url.pathname === "/store-docs-key" && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as { apiKey?: string };
+      if (!body?.apiKey) {
+        return new Response("Invalid docs API key", { status: 400 });
+      }
+      await this.ctx.storage.put(HS_DOCS_KEY_STORAGE_KEY, body.apiKey);
+      return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === "/has-docs-key" && request.method === "GET") {
+      const apiKey = await this.ctx.storage.get<string>(HS_DOCS_KEY_STORAGE_KEY);
+      return Response.json({ valid: Boolean(apiKey) });
+    }
+
+    if (url.pathname === "/clear-docs-key" && request.method === "POST") {
+      await this.ctx.storage.delete(HS_DOCS_KEY_STORAGE_KEY);
+      return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === "/get-docs-key" && request.method === "POST") {
+      const apiKey = await this.ctx.storage.get<string>(HS_DOCS_KEY_STORAGE_KEY);
+      if (!apiKey) {
+        return Response.json({ code: "REAUTH_REQUIRED" }, { status: 401 });
+      }
+      return Response.json({ apiKey });
     }
 
     return new Response("Not found", { status: 404 });
@@ -258,39 +291,108 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
   }
 }
 
-const mcpServeHandler = HelpScoutMCP.serve("/mcp");
+/**
+ * Docs MCP — separate connector at /docs/mcp for Help Scout Docs (knowledge
+ * base) access. Distinct from HelpScoutMCP because it authenticates
+ * differently: no per-user Help Scout OAuth, just a personal Docs API key
+ * collected via the /docs-api-key/enter form (see auth-handler.ts) and
+ * stored in the *mailbox* user DO (MCP_OBJECT, keyed by email) alongside HS
+ * OAuth tokens — DOCS_MCP_OBJECT below is only for this class's own McpAgent
+ * session instances, not for secret storage.
+ */
+export class HelpScoutDocsMCP extends McpAgent<Env, Record<string, never>, Props> {
+  server = new McpServer({
+    name: "helpscout-docs-mcp",
+    version: "1.0.0",
+  });
+
+  async init(): Promise<void> {
+    logger.setLevel(this.env.LOG_LEVEL);
+    const email = this.props?.email;
+    if (!email) {
+      throw new Error("HelpScoutDocsMCP initialized without user props");
+    }
+    const api = new HelpScoutDocsAPI(this.env, this.ctx.storage, email);
+    instrumentServerForAudit(this.server, this.env, email);
+    registerDocsTools(this.server, api);
+
+    const connected = await api.hasApiKey();
+    this.setInstructions(
+      connected
+        ? "Help Scout Docs MCP: read and write access to your Docs knowledge base " +
+            "(collections and articles). Use searchArticles to find stale content by " +
+            "keyword, getArticle to read the full body, and updateArticle to fix it. " +
+            "createArticle defaults to status=notpublished so drafts can be reviewed " +
+            "before publishing."
+        : "No Help Scout Docs API key on file yet — visit /docs-api-key/enter to connect one " +
+            "before calling any tool here.",
+    );
+    logger.info("HelpScoutDocsMCP initialized", { email, connected });
+  }
+
+  private setInstructions(text: string): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (this.server.server as any)._instructions = text;
+  }
+
+  /** Same cross-identity replay guard as HelpScoutMCP.fetch — see there for the full rationale. */
+  async fetch(request: Request): Promise<Response> {
+    const verifiedEmail = request.headers.get(VERIFIED_EMAIL_HEADER);
+    const boundEmail = this.props?.email;
+    if (verifiedEmail && boundEmail && verifiedEmail !== boundEmail) {
+      logger.warn("docs mcp session identity mismatch — refusing cross-identity reuse", {
+        boundEmail,
+        verifiedEmail,
+      });
+      return new Response("Session does not belong to the authenticated identity", {
+        status: 403,
+      });
+    }
+    return super.fetch(request);
+  }
+}
+
+const mailboxServeHandler = HelpScoutMCP.serve("/mcp");
+const docsServeHandler = HelpScoutDocsMCP.serve("/docs/mcp");
 
 /**
  * Wraps McpAgent.serve() to stamp the OAuth-verified caller identity into a
  * trusted request header before the SDK routes to the session DO. The
  * OAuthProvider has already verified the bearer token and exposes the decrypted
  * identity on `ctx.props`; we forward `ctx.props.email` (overwriting any
- * client-supplied copy of the header) so `HelpScoutMCP.fetch` can reject a
+ * client-supplied copy of the header) so `<Agent>.fetch` can reject a
  * session id presented under a different identity than the one it was bound to.
  */
-const mcpApiHandler = {
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext & { props?: Props },
-  ): Promise<Response> {
-    const headers = new Headers(request.headers);
-    headers.delete(VERIFIED_EMAIL_HEADER);
-    const email = ctx.props?.email;
-    if (email) {
-      headers.set(VERIFIED_EMAIL_HEADER, email);
-    }
-    return mcpServeHandler.fetch(new Request(request, { headers }), env, ctx);
-  },
-};
+function withVerifiedEmailHeader(serveHandler: {
+  fetch: (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>;
+}) {
+  return {
+    async fetch(
+      request: Request,
+      env: Env,
+      ctx: ExecutionContext & { props?: Props },
+    ): Promise<Response> {
+      const headers = new Headers(request.headers);
+      headers.delete(VERIFIED_EMAIL_HEADER);
+      const email = ctx.props?.email;
+      if (email) {
+        headers.set(VERIFIED_EMAIL_HEADER, email);
+      }
+      return serveHandler.fetch(new Request(request, { headers }), env, ctx);
+    },
+  };
+}
 
 export default new OAuthProvider({
-  apiRoute: "/mcp",
-  // McpAgent.serve() returns a fetch handler suitable for apiHandler.
-  // Cast is needed because the OAuthProvider generic signature expects
-  // an ExportedHandler-like type but accepts Worker entrypoints.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  apiHandler: mcpApiHandler as any,
+  apiHandlers: {
+    // McpAgent.serve() returns a fetch handler suitable for apiHandlers.
+    // Cast is needed because the OAuthProvider generic signature expects
+    // an ExportedHandler-like type but accepts Worker entrypoints.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    "/mcp": withVerifiedEmailHeader(mailboxServeHandler) as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    "/docs/mcp": withVerifiedEmailHeader(docsServeHandler) as any,
+  },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   defaultHandler: AuthHandler as any,
   authorizeEndpoint: "/authorize",

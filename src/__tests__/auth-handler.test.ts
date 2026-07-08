@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isAllowedRedirectUri } from "../auth-handler";
+import { isAllowedRedirectUri, isDocsResource } from "../auth-handler";
 
 describe("isAllowedRedirectUri", () => {
   it("rejects undefined / empty / non-URL inputs", () => {
@@ -51,5 +51,36 @@ describe("isAllowedRedirectUri", () => {
   it("matches case-insensitively for hostnames", () => {
     expect(isAllowedRedirectUri("https://CLAUDE.AI/cb", "claude.ai")).toBe(true);
     expect(isAllowedRedirectUri("https://app.CLAUDE.AI/cb", "*.claude.ai")).toBe(true);
+  });
+});
+
+describe("isDocsResource", () => {
+  it("returns false for undefined", () => {
+    expect(isDocsResource(undefined)).toBe(false);
+  });
+
+  it("returns true for a single resource URL ending in /docs/mcp", () => {
+    expect(isDocsResource("https://helpscout-mcp.example.com/docs/mcp")).toBe(true);
+  });
+
+  it("tolerates a trailing slash", () => {
+    expect(isDocsResource("https://helpscout-mcp.example.com/docs/mcp/")).toBe(true);
+  });
+
+  it("returns false for the mailbox resource", () => {
+    expect(isDocsResource("https://helpscout-mcp.example.com/mcp")).toBe(false);
+  });
+
+  it("returns true if any entry in an array of resources targets /docs/mcp", () => {
+    expect(
+      isDocsResource([
+        "https://helpscout-mcp.example.com/mcp",
+        "https://helpscout-mcp.example.com/docs/mcp",
+      ]),
+    ).toBe(true);
+  });
+
+  it("returns false for malformed URLs instead of throwing", () => {
+    expect(isDocsResource("not a url")).toBe(false);
   });
 });

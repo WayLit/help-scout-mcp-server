@@ -28,6 +28,7 @@ import {
 const HELPSCOUT_AUTHORIZE_URL =
   "https://secure.helpscout.net/authentication/authorizeClientApplication";
 const HELPSCOUT_TOKEN_URL = "https://api.helpscout.net/v2/oauth2/token";
+const HELPSCOUT_DOCS_API_BASE = "https://docsapi.helpscout.net/v1";
 
 type Bindings = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
@@ -154,6 +155,94 @@ async function userHasValidTokens(env: Env, email: string): Promise<boolean> {
   return json.valid;
 }
 
+/**
+ * True if this authorize/token request targets the Docs MCP rather than the
+ * mailbox MCP. MCP clients send `resource` (RFC 8707) set to the canonical
+ * URL of the server they're connecting to, e.g. `https://host/docs/mcp` —
+ * that's the only signal available at `/authorize` time to tell the two
+ * connectors apart, since both share one OAuthProvider instance.
+ */
+export function isDocsResource(resource: string | string[] | undefined): boolean {
+  const values = Array.isArray(resource) ? resource : resource ? [resource] : [];
+  return values.some((r) => {
+    try {
+      return new URL(r).pathname.replace(/\/+$/, "") === "/docs/mcp";
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Ask the user's DO whether it has a stored Help Scout Docs API key. */
+async function userHasDocsApiKey(env: Env, email: string): Promise<boolean> {
+  const id = env.MCP_OBJECT.idFromName(email);
+  const stub = env.MCP_OBJECT.get(id);
+  const res = await stub.fetch("https://internal/has-docs-key");
+  if (!res.ok) return false;
+  const json = (await res.json()) as { valid: boolean };
+  return json.valid;
+}
+
+/**
+ * Confirm a Docs API key actually works before storing it — catches typos
+ * and expired/revoked keys immediately instead of surfacing a confusing
+ * failure on the first real tool call.
+ */
+async function validateDocsApiKey(apiKey: string): Promise<boolean> {
+  const res = await fetch(`${HELPSCOUT_DOCS_API_BASE}/collections?page=1`, {
+    headers: { Authorization: `Basic ${btoa(`${apiKey}:X`)}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  return res.ok;
+}
+
+async function storeDocsApiKeyInDO(env: Env, email: string, apiKey: string): Promise<void> {
+  const id = env.MCP_OBJECT.idFromName(email);
+  const stub = env.MCP_OBJECT.get(id);
+  const res = await stub.fetch("https://internal/store-docs-key", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to store Docs API key in DO (${res.status}): ${await res.text()}`);
+  }
+}
+
+/** Escape for safe interpolation into HTML text/attribute contexts. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function docsApiKeyFormPage(opts: { state?: string; error?: string }): string {
+  const errorHtml = opts.error
+    ? `<p style="color:#b00020;font:14px system-ui">${escapeHtml(opts.error)}</p>`
+    : "";
+  const stateInput = opts.state
+    ? `<input type="hidden" name="state" value="${escapeHtml(opts.state)}" />`
+    : "";
+  return `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Connect Help Scout Docs</title></head>
+<body style="font:16px system-ui;max-width:480px;margin:64px auto;padding:0 16px">
+  <h1 style="font-size:20px">Connect your Help Scout Docs API key</h1>
+  <p>Find this under your Help Scout profile → <strong>My API Keys</strong>. This key is personal to your account and is stored only for your MCP connection.</p>
+  ${errorHtml}
+  <form method="POST" action="/docs-api-key/submit">
+    ${stateInput}
+    <input type="password" name="apiKey" placeholder="Docs API key" required
+      style="width:100%;padding:8px;font-size:14px;box-sizing:border-box" />
+    <button type="submit" style="margin-top:12px;padding:8px 16px">Save</button>
+  </form>
+</body>
+</html>`;
+}
+
 async function completeAuth(
   env: Bindings,
   oauthReqInfo: AuthRequest,
@@ -215,6 +304,28 @@ app.get("/authorize", async (c) => {
     email: identity.email,
     isServiceToken: identity.isServiceToken,
   });
+
+  // Docs MCP: no per-user OAuth with Help Scout — just a personal Docs API
+  // key. Skip straight to completion if we already have one on file,
+  // otherwise collect it via a short HTML form instead of the HS consent
+  // redirect used by the mailbox connector below.
+  if (isDocsResource(oauthReqInfo.resource)) {
+    if (await userHasDocsApiKey(c.env, identity.email)) {
+      logger.info("authorize: existing docs API key, completing auth", {
+        requestId,
+        email: identity.email,
+      });
+      return completeAuth(c.env, oauthReqInfo, {
+        email: identity.email,
+        name: identity.name,
+      });
+    }
+    const { stateToken } = await createOAuthState(oauthReqInfo, c.env.OAUTH_KV, {
+      accessIdentity: { email: identity.email, name: identity.name },
+    });
+    logger.info("authorize: prompting for docs API key", { requestId, email: identity.email });
+    return c.html(docsApiKeyFormPage({ state: stateToken }));
+  }
 
   // If the user already has valid HS tokens, skip the HS consent leg.
   if (await userHasValidTokens(c.env, identity.email)) {
@@ -297,6 +408,87 @@ app.get("/callback/helpscout", async (c) => {
   return completeAuth(c.env, stored.oauthReqInfo, {
     email: stored.accessIdentity.email,
     name: stored.accessIdentity.name,
+  });
+});
+
+/**
+ * Standalone key-rotation entry point — no OAuth state, just Access-gated.
+ * Lets a user whose Docs API key was revoked/rotated update it without
+ * re-running a client's full OAuth handshake.
+ */
+app.get("/docs-api-key/enter", async (c) => {
+  logger.setLevel(c.env.LOG_LEVEL);
+  try {
+    await verifyAccessJwt(c.req.raw, c.env);
+  } catch (err) {
+    if (err instanceof AccessAuthError) return c.text(err.message, err.status);
+    throw err;
+  }
+  return c.html(docsApiKeyFormPage({}));
+});
+
+app.post("/docs-api-key/submit", async (c) => {
+  logger.setLevel(c.env.LOG_LEVEL);
+  const requestId = newRequestId();
+
+  let identity;
+  try {
+    identity = await verifyAccessJwt(c.req.raw, c.env);
+  } catch (err) {
+    if (err instanceof AccessAuthError) return c.text(err.message, err.status);
+    throw err;
+  }
+
+  const body = await c.req.parseBody();
+  const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  const stateToken = typeof body.state === "string" ? body.state : undefined;
+
+  if (!apiKey) {
+    return c.html(docsApiKeyFormPage({ state: stateToken, error: "API key is required." }), 400);
+  }
+
+  if (!(await validateDocsApiKey(apiKey))) {
+    logger.warn("docs-api-key/submit: validation failed", { requestId, email: identity.email });
+    return c.html(
+      docsApiKeyFormPage({
+        state: stateToken,
+        error: "Help Scout rejected that key. Double-check it and try again.",
+      }),
+      400,
+    );
+  }
+
+  await storeDocsApiKeyInDO(c.env, identity.email, apiKey);
+  logger.info("docs-api-key/submit: key stored", { requestId, email: identity.email });
+
+  if (!stateToken) {
+    return c.html(
+      `<!doctype html><html><body style="font:16px system-ui;max-width:480px;margin:64px auto;padding:0 16px">
+        <p>Docs API key saved. You can close this tab.</p>
+      </body></html>`,
+    );
+  }
+
+  const stored = await readOAuthState(stateToken, c.env.OAUTH_KV);
+  if (!stored?.accessIdentity) {
+    return c.text("State expired or not found", 400);
+  }
+  // Same cross-identity guard as the HS OAuth callback: the state token
+  // alone isn't sufficient if it leaked to a different Access-authenticated
+  // user within its TTL.
+  if (stored.accessIdentity.email !== identity.email) {
+    logger.warn("docs-api-key/submit: identity mismatch — refusing cross-identity completion", {
+      requestId,
+      submittedEmail: identity.email,
+      stateEmail: stored.accessIdentity.email,
+    });
+    return c.text("Submitting identity does not match the initiating user", 403);
+  }
+
+  await deleteOAuthState(stateToken, c.env.OAUTH_KV);
+  return completeAuth(c.env, stored.oauthReqInfo, {
+    email: identity.email,
+    name: identity.name,
   });
 });
 

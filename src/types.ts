@@ -5,6 +5,8 @@
 export interface Env {
   OAUTH_KV: KVNamespace;
   MCP_OBJECT: DurableObjectNamespace;
+  /** Session DO for the Docs MCP (/docs/mcp). Per-user Docs API keys live in MCP_OBJECT, not here. */
+  DOCS_MCP_OBJECT: DurableObjectNamespace;
 
   /** Optional: D1 database for tool-call audit log. If absent, audit is a no-op. */
   AUDIT_DB?: D1Database;
@@ -62,6 +64,14 @@ export interface HelpScoutTokenRecord {
 
 /** DO storage key for the user's Help Scout tokens. */
 export const HS_TOKENS_STORAGE_KEY = "hs:tokens";
+
+/**
+ * DO storage key for the user's personal Help Scout Docs API key.
+ * Unlike the OAuth tokens above, this is a single static credential
+ * (Profile → My API Keys) with no expiry/refresh — Docs API access is
+ * per-user but not OAuth-based.
+ */
+export const HS_DOCS_KEY_STORAGE_KEY = "hs:docs-api-key";
 
 /** Identity payload attached by Access JWT middleware. */
 export interface AccessIdentity {

@@ -33,20 +33,20 @@ Paste the two returned IDs into `wrangler.jsonc` (`id` and `preview_id`), replac
 
 ## 3. Set up Cloudflare Access (identity)
 
-Cloudflare Access provides identity. Scope it to the worker's **`/authorize` endpoint only** — that is the single browser-interactive step where the worker reads the verified email from the Access JWT. Every other endpoint is deliberately left un-fronted: `/mcp` and `/token` are protected by the OAuth bearer token the worker itself issues *after* a successful `/authorize`, and `/callback/helpscout` is guarded by the one-time OAuth state token. Fronting only `/authorize` is what lets MCP clients authenticate with an ordinary browser login instead of a pre-shared service token (see step 8).
+Cloudflare Access provides identity. Scope it to the worker's **browser-interactive paths only**: `/authorize` (OAuth entry for both `/mcp` and `/docs/mcp`), `/callback/helpscout` (the Help Scout OAuth redirect — the worker re-verifies the Access JWT here, binding the callback to the identity that started the flow, on top of the one-time OAuth state token), and `/docs-api-key/*` (the Docs API key entry/rotation form — see the [Docs MCP](./README.md#docs-mcp) section in the README). Every other endpoint is deliberately left un-fronted: `/mcp`, `/docs/mcp`, and `/token` are protected by the OAuth bearer token the worker itself issues *after* a successful `/authorize`. Fronting only these paths is what lets MCP clients authenticate with an ordinary browser login instead of a pre-shared service token (see step 8).
 
 1. **Add Google Workspace as an IdP** in Zero Trust → Settings → Authentication → Login methods → Add new → Google Workspace. Follow the connector wizard (one-time admin consent in Workspace).
-2. **Create a Self-hosted Access application** scoped to the authorize path:
-   - Application domain / path: your hostname **with the `/authorize` path** — e.g. `helpscout-mcp.example.com/authorize` (or the `*.workers.dev` URL + `/authorize`).
+2. **Create a Self-hosted Access application** scoped to the authorize + callback + docs-key paths:
+   - Application domain / path: your hostname **with the `/authorize` path** — e.g. `helpscout-mcp.example.com/authorize` (or the `*.workers.dev` URL + `/authorize`). Add a second path rule for `/callback/helpscout` and a third for `/docs-api-key/*` in the same app (or separate apps with an identical policy) — the callback rule is required, not just for Docs MCP.
    - Identity providers: Google Workspace.
-   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>`. This is your perimeter — it still gates every login, because identity can only enter through `/authorize`.
+   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>`. This is your perimeter — it still gates every login, because identity can only enter through these paths.
 3. **Capture two values** for worker secrets:
    - `CF_ACCESS_TEAM_DOMAIN` — your team subdomain (e.g. `acme` for `acme.cloudflareaccess.com`).
    - `CF_ACCESS_AUD` — the Application Audience (AUD) tag from the Access app overview page.
 
-> **No service token required.** Earlier versions fronted the *entire* hostname, which forced headless clients to send `CF-Access-Client-Id` / `CF-Access-Client-Secret` on every `/mcp` call. With Access scoped to `/authorize`, the interactive browser OAuth flow carries identity and the worker's own bearer token protects the MCP endpoints — so end users connect with no headers (step 8).
+> **No service token required.** Earlier versions fronted the *entire* hostname, which forced headless clients to send `CF-Access-Client-Id` / `CF-Access-Client-Secret` on every `/mcp` call. With Access scoped this way, the interactive browser OAuth flow carries identity and the worker's own bearer token protects the MCP endpoints — so end users connect with no headers (step 8).
 >
-> After deploying (step 6), verify the scoping: `curl -i https://<hostname>/mcp` should return a **401 bearer challenge from the worker**, not a Cloudflare Access login page. If you get Access login HTML, the app is still fronting the whole host — narrow its path to `/authorize`.
+> After deploying (step 6), verify the scoping: `curl -i https://<hostname>/mcp` and `curl -i https://<hostname>/docs/mcp` should each return a **401 bearer challenge from the worker**, not a Cloudflare Access login page. If you get Access login HTML, the app is still fronting the whole host — narrow its path.
 
 ## 4. Create the Help Scout OAuth app
 
@@ -108,8 +108,9 @@ When changing hostname, three things must point at the same place:
 A successful deploy prints the worker URL. Sanity checks:
 
 ```bash
-# Should return a Cloudflare Access login challenge, not 5xx from the worker.
+# Should return a 401 bearer challenge from the worker, not 5xx and not an Access login page.
 curl -i https://helpscout-mcp.waylit.ai/mcp
+curl -i https://helpscout-mcp.waylit.ai/docs/mcp
 
 # Type-check + dry-run is the same gate CI uses:
 pnpm type-check
@@ -136,6 +137,8 @@ On first connect the client opens a browser and walks you through two consent st
 The client then exchanges the resulting code at `/token`, stores its own bearer token, and uses that token for subsequent `/mcp` calls. Per-user Help Scout tokens live in that user's Durable Object and refresh automatically.
 
 > Browser-based clients (claude.ai, etc.) additionally need their redirect host listed in `OAUTH_ALLOWED_REDIRECT_HOSTS` (step 5). Loopback clients like Claude Code work with no extra config.
+
+**Docs MCP (optional, separate connector):** add a second entry pointed at `/docs/mcp`, e.g. `claude mcp add helpscout-docs https://helpscout-mcp.waylit.ai/docs/mcp --transport http`. First connect walks through Cloudflare Access, then — instead of Help Scout OAuth consent — a short form asking for your personal Docs API key (Help Scout → profile → **My API Keys**). See [Docs MCP](./README.md#docs-mcp) in the README for details.
 
 ## 9. (Optional) Enable the audit log
 
@@ -172,7 +175,9 @@ If the `AUDIT_DB` binding is absent, audit logging is a silent no-op. `args_hash
 | `401` before the worker is hit | Cloudflare Access policy doesn't include the user. Check Zero Trust → Logs → Access. |
 | `invalid_grant` loops on tool call | User's Help Scout refresh token was revoked (HS app reinstalled, etc.). Worker should detect and force re-consent; if not, delete the user's DO storage entry manually via the dashboard. |
 | Tool calls return `UNAUTHORIZED` | Token storage is missing/corrupt — forces re-auth on next call, which usually self-heals. |
-| `curl /mcp` returns a Cloudflare Access login page (HTML) instead of a 401 bearer challenge | The Access app is fronting the whole hostname. Scope it to the `/authorize` path only (step 3), so the bearer-protected `/mcp` and `/token` endpoints stay reachable. |
-| Browser never prompts for Cloudflare Access during connect | The `/authorize` path isn't covered by any Access application — identity isn't being enforced. Confirm the app's domain/path includes `/authorize`. |
+| `curl /mcp` or `curl /docs/mcp` returns a Cloudflare Access login page (HTML) instead of a 401 bearer challenge | The Access app is fronting the whole hostname. Scope it to `/authorize`, `/callback/helpscout`, and `/docs-api-key/*` only (step 3), so the bearer-protected `/mcp`, `/docs/mcp`, and `/token` endpoints stay reachable. |
+| Browser never prompts for Cloudflare Access during connect | The `/authorize` (or `/callback/helpscout`, or `/docs-api-key/*`) path isn't covered by any Access application — identity isn't being enforced. Confirm the app's domain/path includes it. |
+| `Missing Cf-Access-Jwt-Assertion header` on the Help Scout redirect back to the worker | The Access app's path rules don't cover `/callback/helpscout`. The worker re-verifies the Access JWT on that route (to bind the callback to the identity that started the flow), so it must be fronted the same as `/authorize`. Add the path rule (step 3). |
+| Docs MCP tool calls return `REAUTH_REQUIRED` | No Docs API key on file, or Help Scout revoked/rotated it. Visit `/docs-api-key/enter` to (re)connect one. |
 | `wrangler deploy` fails with DNS error | Custom domain's zone is not Cloudflare-managed on this account. Either move DNS or deploy to `*.workers.dev` instead. |
 | `BYPASS_ACCESS=true` is silently ignored in production | Intentional. The runtime refuses it outside `wrangler dev`. |

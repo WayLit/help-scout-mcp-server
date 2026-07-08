@@ -23,6 +23,10 @@
 			{
 				"name": "MCP_OBJECT",
 				"class_name": "HelpScoutMCP"
+			},
+			{
+				"name": "DOCS_MCP_OBJECT",
+				"class_name": "HelpScoutDocsMCP"
 			}
 		]
 	},
@@ -31,6 +35,12 @@
 			"tag": "v1",
 			"new_sqlite_classes": [
 				"HelpScoutMCP"
+			]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"HelpScoutDocsMCP"
 			]
 		}
 	],
