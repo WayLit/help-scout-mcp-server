@@ -8,7 +8,7 @@
  * One singleton OpenRedaction instance per DO (configured at module-import
  * time). Same instance across tool calls keeps regex compilation amortized.
  */
-import { OpenRedaction } from "openredaction";
+import { gdprPreset, OpenRedaction } from "openredaction";
 
 import { logger } from "./logger";
 
@@ -32,6 +32,15 @@ function getRedactor(): OpenRedaction {
       // corresponding privacy win, since names alone aren't very identifying
       // without the email/phone/address they're paired with.
       includeNames: false,
+      // `includeNames: false` alone doesn't disable the NAME pattern: the
+      // "gdpr" preset sets its own explicit `patterns` allowlist (which
+      // includes "NAME"), and OpenRedaction's pattern builder honors an
+      // explicit `patterns` list *before* checking includeNames/etc. That let
+      // the NAME regex (which matches any run of Title-Case/ALL-CAPS words,
+      // e.g. "ACTION REQUIRED") through despite includeNames: false, mangling
+      // non-PII subject lines. Re-deriving the preset's pattern list minus
+      // "NAME" restores the intended behavior.
+      patterns: (gdprPreset.patterns ?? []).filter((type) => type !== "NAME"),
       // Customer-supplied terms that should never be redacted. Add internal
       // product names / domains here if any leak through.
       whitelist: [],

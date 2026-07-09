@@ -60,6 +60,11 @@ describe("redactText", () => {
     await expect(redactText("jane@acme.com")).rejects.toThrow("PII redaction failed");
     spy.mockRestore();
   });
+
+  it("leaves capitalized non-name phrases and person names alone", async () => {
+    const out = await redactText("ACTION REQUIRED: Confirm I-797 Receipt Notice for John Smith");
+    expect(out).toBe("ACTION REQUIRED: Confirm I-797 Receipt Notice for John Smith");
+  });
 });
 
 describe("redactCustomerFields", () => {
