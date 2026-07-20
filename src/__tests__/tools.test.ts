@@ -934,6 +934,68 @@ describe("createDraftConversation", () => {
     expect(payload.error).toBe("UPSTREAM_ERROR");
     expect(payload.tool).toBe("createDraftConversation");
   });
+
+  it("uses customerId when both customerId and customerEmail are provided (precedence)", async () => {
+    const { api, tools } = setupServer();
+    api.post.mockResolvedValue({
+      data: {},
+      headers: new Headers({ "Resource-Id": "999" }),
+    });
+
+    await tools.createDraftConversation.handler(
+      {
+        mailboxId: 85,
+        customerId: 7,
+        customerEmail: "different@acme.com",
+        subject: "Test",
+        text: "Testing precedence",
+      },
+      {},
+    );
+
+    expect(api.post).toHaveBeenCalledWith(
+      "/conversations",
+      expect.objectContaining({
+        customer: { id: 7 },
+        threads: [
+          expect.objectContaining({
+            customer: { id: 7 },
+          }),
+        ],
+      }),
+      { invalidate: ["/conversations"] },
+    );
+  });
+
+  it("treats customerId: 0 as a valid customer ID, not as missing", async () => {
+    const { api, tools } = setupServer();
+    api.post.mockResolvedValue({
+      data: {},
+      headers: new Headers({ "Resource-Id": "888" }),
+    });
+
+    const result = await tools.createDraftConversation.handler(
+      { mailboxId: 85, customerId: 0, subject: "Test", text: "Testing zero ID" },
+      {},
+    );
+
+    // Should not error; customerId: 0 is valid
+    expect(result.isError).toBeFalsy();
+    expect(api.post).toHaveBeenCalledWith(
+      "/conversations",
+      expect.objectContaining({
+        customer: { id: 0 },
+        threads: [
+          expect.objectContaining({
+            customer: { id: 0 },
+          }),
+        ],
+      }),
+      { invalidate: ["/conversations"] },
+    );
+    const payload = parseResult(result) as { success: boolean };
+    expect(payload.success).toBe(true);
+  });
 });
 
 describe("error handling", () => {

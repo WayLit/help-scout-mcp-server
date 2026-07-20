@@ -1195,13 +1195,13 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
     CreateDraftConversationShape,
     async (input): Promise<CallToolResult> => {
       try {
-        if (!input.customerId && !input.customerEmail) {
+        if (input.customerId === undefined && input.customerEmail === undefined) {
           throw new HelpScoutApiError(
             "INVALID_INPUT",
             "Provide customerId or customerEmail to identify the customer.",
           );
         }
-        const customer = input.customerId
+        const customer = input.customerId !== undefined
           ? { id: input.customerId }
           : {
               email: input.customerEmail,
