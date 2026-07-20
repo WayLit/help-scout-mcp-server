@@ -16,7 +16,21 @@ function fakeStorage() {
     put: vi.fn(async (key: string, value: unknown) => {
       store.set(key, value);
     }),
-    delete: vi.fn(async (key: string) => store.delete(key)),
+    delete: vi.fn(async (keys: string | string[]): Promise<boolean | number> => {
+      if (Array.isArray(keys)) {
+        let count = 0;
+        for (const key of keys) if (store.delete(key)) count++;
+        return count;
+      }
+      return store.delete(keys);
+    }),
+    list: vi.fn(async ({ prefix }: { prefix: string }): Promise<Map<string, unknown>> => {
+      const matches = new Map<string, unknown>();
+      for (const [key, value] of store) {
+        if (key.startsWith(prefix)) matches.set(key, value);
+      }
+      return matches;
+    }),
     raw: store,
   };
 }
@@ -235,5 +249,88 @@ describe("HelpScoutAPI cache", () => {
     await api.get("/mailboxes");
     await api.get("/mailboxes");
     expect(hsCalls).toBe(1); // second call cached
+  });
+
+  it("returns the parsed response body directly (not wrapped in { data, headers })", async () => {
+    const ud = fakeUserDO({ initialTokens: validTokens });
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as typeof fetch;
+
+    const api = new HelpScoutAPI(buildEnv(ud.namespace), fakeStorage() as never, "user@example.com");
+    const result = await api.get<{ ok: boolean }>("/mailboxes");
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("HelpScoutAPI.post", () => {
+  it("returns the parsed body and response headers", async () => {
+    const ud = fakeUserDO({ initialTokens: validTokens });
+    globalThis.fetch = vi.fn(async () =>
+      new Response(null, {
+        status: 201,
+        headers: {
+          "Resource-Id": "999",
+          "Web-Location": "https://secure.helpscout.net/conversation/999",
+        },
+      }),
+    ) as typeof fetch;
+
+    const api = new HelpScoutAPI(buildEnv(ud.namespace), fakeStorage() as never, "user@example.com");
+    const { data, headers } = await api.post("/conversations", { subject: "Hi" });
+
+    expect(data).toEqual({});
+    expect(headers.get("Resource-Id")).toBe("999");
+    expect(headers.get("Web-Location")).toBe("https://secure.helpscout.net/conversation/999");
+  });
+
+  it("invalidates the cache for the posted endpoint by default", async () => {
+    const ud = fakeUserDO({ initialTokens: validTokens });
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as typeof fetch;
+
+    const storage = fakeStorage();
+    const api = new HelpScoutAPI(buildEnv(ud.namespace), storage as never, "user@example.com");
+    await api.get("/conversations");
+    expect(storage.raw.has("cache:GET:/conversations:")).toBe(true);
+
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 201 })) as typeof fetch;
+    await api.post("/conversations", { subject: "Hi" });
+
+    expect(storage.raw.has("cache:GET:/conversations:")).toBe(false);
+  });
+
+  it("invalidates every endpoint passed via opts.invalidate", async () => {
+    const ud = fakeUserDO({ initialTokens: validTokens });
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as typeof fetch;
+
+    const storage = fakeStorage();
+    const api = new HelpScoutAPI(buildEnv(ud.namespace), storage as never, "user@example.com");
+    await api.get("/conversations/1");
+    await api.get("/conversations/1/threads");
+    expect(storage.raw.has("cache:GET:/conversations/1:")).toBe(true);
+    expect(storage.raw.has("cache:GET:/conversations/1/threads:")).toBe(true);
+
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 201 })) as typeof fetch;
+    await api.post(
+      "/conversations/1/reply",
+      { text: "hi" },
+      { invalidate: ["/conversations/1", "/conversations/1/threads"] },
+    );
+
+    expect(storage.raw.has("cache:GET:/conversations/1:")).toBe(false);
+    expect(storage.raw.has("cache:GET:/conversations/1/threads:")).toBe(false);
   });
 });

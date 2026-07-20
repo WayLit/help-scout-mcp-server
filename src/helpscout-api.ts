@@ -170,11 +170,11 @@ export class HelpScoutAPI {
     if (cached !== undefined) return cached;
 
     const url = this.buildUrl(endpoint, params);
-    const result = await this.executeWithRetry<T>(url, { method: "GET" });
+    const { data } = await this.executeWithRetry<T>(url, { method: "GET" });
 
     const ttl = cacheOptions?.ttl ?? this.getDefaultCacheTtlSeconds(endpoint);
-    await this.setCached(cacheKey, result, ttl);
-    return result;
+    await this.setCached(cacheKey, data, ttl);
+    return data;
   }
 
   /**
@@ -186,8 +186,28 @@ export class HelpScoutAPI {
    */
   async patch<T = unknown>(endpoint: string, body: unknown): Promise<T> {
     const url = this.buildUrl(endpoint);
-    const result = await this.executeWithRetry<T>(url, { method: "PATCH", body });
+    const { data } = await this.executeWithRetry<T>(url, { method: "PATCH", body });
     await this.invalidateEndpointCache(endpoint);
+    return data;
+  }
+
+  /**
+   * POST a Help Scout endpoint with a JSON body. Used for creation endpoints
+   * (new conversation, new reply thread) that return 201 with an empty body —
+   * the created resource's ID comes back in response headers, so callers get
+   * both the parsed body and the raw `Headers`. Invalidates the cache for
+   * `endpoint` by default; pass `invalidate` when the write should evict a
+   * different (e.g. parent) endpoint's cached GETs instead.
+   */
+  async post<T = unknown>(
+    endpoint: string,
+    body: unknown,
+    opts?: { invalidate?: string[] },
+  ): Promise<{ data: T; headers: Headers }> {
+    const url = this.buildUrl(endpoint);
+    const result = await this.executeWithRetry<T>(url, { method: "POST", body });
+    const targets = opts?.invalidate ?? [endpoint];
+    await Promise.all(targets.map((e) => this.invalidateEndpointCache(e)));
     return result;
   }
 
@@ -212,7 +232,7 @@ export class HelpScoutAPI {
     url: string,
     init: { method: string; body?: unknown },
     maxRetries = 3,
-  ): Promise<T> {
+  ): Promise<{ data: T; headers: Headers }> {
     const baseDelayMs = 1_000;
     const maxDelayMs = 10_000;
     const hasBody = init.body !== undefined;
@@ -282,9 +302,9 @@ export class HelpScoutAPI {
       }
 
       const text = await res.text();
-      if (!text) return {} as T;
+      if (!text) return { data: {} as T, headers: res.headers };
       try {
-        return JSON.parse(text) as T;
+        return { data: JSON.parse(text) as T, headers: res.headers };
       } catch {
         throw new HelpScoutApiError(
           "UPSTREAM_ERROR",
