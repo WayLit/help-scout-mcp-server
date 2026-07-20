@@ -275,7 +275,7 @@ function pickFirstAndLast(threads: Thread[]): {
 // ── Tool registration ──────────────────────────────────────────────────────
 
 export function registerTools(server: McpServer, api: HelpScoutAPI): void {
-  // ── searchInboxes ────────────────────────────────────────────────────
+  // ── searchInboxes ────────────────────────────────────────────────
   server.tool(
     "searchInboxes",
     "List or search inboxes by name. Use empty string to list all.",
@@ -697,6 +697,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             customer: { id: conversation.customer.id },
             text: input.replyText,
             draft: true,
+            // Pinning status prevents Help Scout from auto-reactivating the conversation when a draft thread is added.
             status: conversation.status,
           },
           {
