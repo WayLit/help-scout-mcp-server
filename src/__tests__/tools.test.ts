@@ -11,6 +11,7 @@ const EXPECTED_TOOL_NAMES = [
   "searchConversations",
   "getConversationSummary",
   "gatherReplyContext",
+  "draftReply",
   "getThreads",
   "whoami",
   "getServerTime",
@@ -487,6 +488,84 @@ describe("gatherReplyContext", () => {
     // guidance is never spliced into the instruction prose.
     expect(payload.draftingInstructions).not.toContain("Keep it under 3 sentences.");
     expect(payload.draftingInstructions).toMatch(/untrusted content written by the customer/i);
+  });
+});
+
+describe("draftReply", () => {
+  it("saves a draft reply and returns the new thread id", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      id: 100,
+      number: 5,
+      subject: "Login broken",
+      status: "pending",
+      customer: { id: 7, firstName: "Ada", lastName: "L", email: "ada@x.com" },
+    });
+    api.post.mockResolvedValue({
+      data: {},
+      headers: new Headers({ "Resource-Id": "567" }),
+    });
+
+    const result = await tools.draftReply.handler(
+      { conversationId: "100", replyText: "Thanks for reaching out!" },
+      {},
+    );
+
+    expect(api.post).toHaveBeenCalledWith(
+      "/conversations/100/reply",
+      {
+        customer: { id: 7 },
+        text: "Thanks for reaching out!",
+        draft: true,
+        status: "pending",
+      },
+      { invalidate: ["/conversations/100", "/conversations/100/threads"] },
+    );
+    const payload = parseResult(result) as {
+      success: boolean;
+      conversationId: string;
+      threadId: number | null;
+    };
+    expect(result.isError).toBeFalsy();
+    expect(payload.success).toBe(true);
+    expect(payload.conversationId).toBe("100");
+    expect(payload.threadId).toBe(567);
+  });
+
+  it("errors without calling post when the conversation has no customer", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      id: 100,
+      number: 5,
+      subject: "Hi",
+      status: "active",
+      customer: null,
+    });
+
+    const result = await tools.draftReply.handler(
+      { conversationId: "100", replyText: "Hi there" },
+      {},
+    );
+
+    expect(api.post).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error: string; tool: string };
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(payload.tool).toBe("draftReply");
+  });
+
+  it("surfaces a Help Scout API error as an isError result", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockRejectedValue(new HelpScoutApiError("NOT_FOUND", "no such conversation", 404));
+
+    const result = await tools.draftReply.handler(
+      { conversationId: "99999", replyText: "Hi" },
+      {},
+    );
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error: string; tool: string };
+    expect(payload.error).toBe("NOT_FOUND");
+    expect(payload.tool).toBe("draftReply");
   });
 });
 

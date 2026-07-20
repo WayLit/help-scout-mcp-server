@@ -35,6 +35,7 @@ import {
   Conversation,
   Customer,
   CustomerAddress,
+  DraftReplyShape,
   GatherReplyContextShape,
   GetConversationSummaryShape,
   GetCustomerContactsShape,
@@ -669,6 +670,51 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         });
       } catch (err) {
         return errorResult(err, "gatherReplyContext", api.userEmail);
+      }
+    },
+  );
+
+  // ── draftReply ───────────────────────────────────────────────────────
+  server.tool(
+    "draftReply",
+    "Save a composed reply to a conversation as a Help Scout draft. Always creates a draft (draft:true) — nothing is sent to the customer until a human opens it in Help Scout and sends it. Call gatherReplyContext first to gather the context needed to compose replyText.",
+    DraftReplyShape,
+    async (input): Promise<CallToolResult> => {
+      try {
+        const conversation = await api.get<Conversation>(
+          `/conversations/${input.conversationId}`,
+        );
+        if (!conversation.customer?.id) {
+          throw new HelpScoutApiError(
+            "INVALID_INPUT",
+            "Conversation has no associated customer to reply to.",
+          );
+        }
+        const { headers } = await api.post<unknown>(
+          `/conversations/${input.conversationId}/reply`,
+          {
+            customer: { id: conversation.customer.id },
+            text: input.replyText,
+            draft: true,
+            status: conversation.status,
+          },
+          {
+            invalidate: [
+              `/conversations/${input.conversationId}`,
+              `/conversations/${input.conversationId}/threads`,
+            ],
+          },
+        );
+        const threadId = headers.get("Resource-Id");
+        return textResult({
+          success: true,
+          conversationId: input.conversationId,
+          threadId: threadId ? Number(threadId) : null,
+          message:
+            "Draft reply saved to Help Scout — nothing sent. Review and send it from Help Scout.",
+        });
+      } catch (err) {
+        return errorResult(err, "draftReply", api.userEmail);
       }
     },
   );

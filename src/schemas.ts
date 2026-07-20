@@ -55,6 +55,14 @@ export const GatherReplyContextShape = {
     .describe("Optional extra instructions for the draft, e.g. tone or specific points to cover."),
 };
 
+export const DraftReplyShape = {
+  conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
+  replyText: z
+    .string()
+    .min(1)
+    .describe("The composed reply body to save as a Help Scout draft."),
+};
+
 export const AdvancedConversationSearchShape = {
   contentTerms: z.array(z.string()).optional(),
   subjectTerms: z.array(z.string()).optional(),
