@@ -34,7 +34,9 @@ ${inboxList}
 | See all conversations for an organization | getOrganizationConversations |
 | Get full conversation thread | getThreads |
 | Quick conversation preview | getConversationSummary |
-| Draft a reply using the customer's history | draftReply |
+| Gather context before replying to a conversation | gatherReplyContext |
+| Save a composed reply as a Help Scout draft (nothing sent) | draftReply |
+| Start a new outbound conversation as a draft (not a reply) | createDraftConversation |
 | Identify the current Help Scout user (your id/email/role) | whoami |
 | Change a ticket's status (active/pending/closed/spam) | updateConversationStatus |
 
@@ -44,11 +46,13 @@ ${inboxList}
 - **Customer history**: searchCustomersByEmail → getCustomer → structuredConversationFilter/getThreads
 - **Account review**: listOrganizations/getOrganization → getOrganizationMembers → getOrganizationConversations
 - **Resolve a ticket**: locate it (search/lookup) → getThreads to confirm → updateConversationStatus
+- **Reply to a ticket**: gatherReplyContext → compose the reply → draftReply to save it (review & send from Help Scout)
 
 ## Notes
 - Always use inbox IDs from the list above (not names)
 - searchConversations defaults to active+pending (pass status:"closed" to include closed); other search tools include closed by default
 - updateConversationStatus is a write operation — it modifies the live ticket
+- draftReply and createDraftConversation are write operations, but always create drafts — nothing is ever sent to a customer without a human action in Help Scout
 - Use getServerTime for date-relative queries
 - PII redaction is enabled by default (set REDACT_PII=false to disable)`;
 }
