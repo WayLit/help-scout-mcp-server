@@ -146,6 +146,36 @@ export const MoveConversationShape = {
   mailboxId: z.number().int().min(0).describe("Target mailbox ID to move the conversation to"),
 };
 
+export const CreateDraftConversationShape = {
+  mailboxId: z.number().int().min(0).describe("Inbox to create the draft conversation in"),
+  customerId: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Existing Help Scout customer ID. Takes precedence over customerEmail if both are given.",
+    ),
+  customerEmail: z
+    .string()
+    .email()
+    .optional()
+    .describe(
+      "Customer email. Help Scout finds or creates the customer by this address if customerId is omitted.",
+    ),
+  customerFirstName: z
+    .string()
+    .optional()
+    .describe("Used only with customerEmail, when creating a new customer."),
+  customerLastName: z
+    .string()
+    .optional()
+    .describe("Used only with customerEmail, when creating a new customer."),
+  subject: z.string().min(1),
+  text: z.string().min(1).describe("The draft message body."),
+  tags: z.array(z.string()).optional(),
+};
+
 // ── Customer tools ─────────────────────────────────────────────────────────
 
 export const GetCustomerShape = {

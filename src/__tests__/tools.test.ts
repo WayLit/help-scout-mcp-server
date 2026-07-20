@@ -22,6 +22,7 @@ const EXPECTED_TOOL_NAMES = [
   "updateConversationStatus",
   "assignConversation",
   "moveConversation",
+  "createDraftConversation",
   "getCustomer",
   "listCustomers",
   "searchCustomersByEmail",
@@ -64,7 +65,7 @@ beforeEach(() => {
 });
 
 describe("registerTools", () => {
-  it("registers exactly the expected 20 tool names", () => {
+  it("registers exactly the expected 24 tool names", () => {
     const { tools } = setupServer();
     expect(Object.keys(tools).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
@@ -824,6 +825,114 @@ describe("moveConversation", () => {
     const payload = parseResult(result) as { error: string; tool: string };
     expect(payload.error).toBe("NOT_FOUND");
     expect(payload.tool).toBe("moveConversation");
+  });
+});
+
+describe("createDraftConversation", () => {
+  it("creates a draft conversation from an existing customerId", async () => {
+    const { api, tools } = setupServer();
+    api.post.mockResolvedValue({
+      data: {},
+      headers: new Headers({
+        "Resource-Id": "12345",
+        "Web-Location": "https://secure.helpscout.net/conversation/12345/",
+      }),
+    });
+
+    const result = await tools.createDraftConversation.handler(
+      { mailboxId: 85, customerId: 7, subject: "Following up", text: "Just checking in!" },
+      {},
+    );
+
+    expect(api.post).toHaveBeenCalledWith(
+      "/conversations",
+      {
+        subject: "Following up",
+        type: "email",
+        status: "active",
+        mailboxId: 85,
+        customer: { id: 7 },
+        threads: [{ type: "reply", customer: { id: 7 }, text: "Just checking in!", draft: true }],
+      },
+      { invalidate: ["/conversations"] },
+    );
+    const payload = parseResult(result) as {
+      success: boolean;
+      conversationId: number | null;
+      webLocation: string | null;
+    };
+    expect(result.isError).toBeFalsy();
+    expect(payload.success).toBe(true);
+    expect(payload.conversationId).toBe(12345);
+    expect(payload.webLocation).toBe("https://secure.helpscout.net/conversation/12345/");
+  });
+
+  it("finds-or-creates the customer by email, name, and tags when customerId is omitted", async () => {
+    const { api, tools } = setupServer();
+    api.post.mockResolvedValue({ data: {}, headers: new Headers({ "Resource-Id": "999" }) });
+
+    await tools.createDraftConversation.handler(
+      {
+        mailboxId: 85,
+        customerEmail: "bear@acme.com",
+        customerFirstName: "Vernon",
+        customerLastName: "Bear",
+        subject: "Welcome",
+        text: "Hi there",
+        tags: ["vip"],
+      },
+      {},
+    );
+
+    expect(api.post).toHaveBeenCalledWith(
+      "/conversations",
+      {
+        subject: "Welcome",
+        type: "email",
+        status: "active",
+        mailboxId: 85,
+        customer: { email: "bear@acme.com", firstName: "Vernon", lastName: "Bear" },
+        threads: [
+          {
+            type: "reply",
+            customer: { email: "bear@acme.com", firstName: "Vernon", lastName: "Bear" },
+            text: "Hi there",
+            draft: true,
+          },
+        ],
+        tags: ["vip"],
+      },
+      { invalidate: ["/conversations"] },
+    );
+  });
+
+  it("errors without calling post when neither customerId nor customerEmail is given", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.createDraftConversation.handler(
+      { mailboxId: 85, subject: "Hi", text: "Hi there" },
+      {},
+    );
+
+    expect(api.post).not.toHaveBeenCalled();
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error: string; tool: string };
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(payload.tool).toBe("createDraftConversation");
+  });
+
+  it("surfaces a Help Scout API error as an isError result", async () => {
+    const { api, tools } = setupServer();
+    api.post.mockRejectedValue(new HelpScoutApiError("UPSTREAM_ERROR", "boom", 500));
+
+    const result = await tools.createDraftConversation.handler(
+      { mailboxId: 85, customerId: 7, subject: "Hi", text: "Hi there" },
+      {},
+    );
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error: string; tool: string };
+    expect(payload.error).toBe("UPSTREAM_ERROR");
+    expect(payload.tool).toBe("createDraftConversation");
   });
 });
 

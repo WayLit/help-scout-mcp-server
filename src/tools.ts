@@ -33,6 +33,7 @@ import {
   AssignConversationShape,
   ComprehensiveConversationSearchShape,
   Conversation,
+  CreateDraftConversationShape,
   Customer,
   CustomerAddress,
   DraftReplyShape,
@@ -1183,6 +1184,58 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         });
       } catch (err) {
         return errorResult(err, "moveConversation", api.userEmail);
+      }
+    },
+  );
+
+  // ── createDraftConversation ──────────────────────────────────────────
+  server.tool(
+    "createDraftConversation",
+    "Start a brand-new conversation with a customer, saved as a Help Scout draft — for proactive outreach, not for replying to an existing ticket (use draftReply for that). Always creates a draft; nothing is sent until a human opens it in Help Scout and sends it.",
+    CreateDraftConversationShape,
+    async (input): Promise<CallToolResult> => {
+      try {
+        if (!input.customerId && !input.customerEmail) {
+          throw new HelpScoutApiError(
+            "INVALID_INPUT",
+            "Provide customerId or customerEmail to identify the customer.",
+          );
+        }
+        const customer = input.customerId
+          ? { id: input.customerId }
+          : {
+              email: input.customerEmail,
+              ...(input.customerFirstName ? { firstName: input.customerFirstName } : {}),
+              ...(input.customerLastName ? { lastName: input.customerLastName } : {}),
+            };
+
+        const { headers } = await api.post<unknown>(
+          "/conversations",
+          {
+            subject: input.subject,
+            type: "email",
+            status: "active",
+            mailboxId: input.mailboxId,
+            customer,
+            threads: [{ type: "reply", customer, text: input.text, draft: true }],
+            ...(input.tags?.length ? { tags: input.tags } : {}),
+          },
+          { invalidate: ["/conversations"] },
+        );
+        const conversationId = headers.get("Resource-Id");
+        const webLocation = headers.get("Web-Location") ?? headers.get("Location");
+
+        return textResult({
+          success: true,
+          conversationId: conversationId ? Number(conversationId) : null,
+          mailboxId: input.mailboxId,
+          subject: input.subject,
+          webLocation,
+          message:
+            "Draft conversation created. Nothing has been sent — review and send it from Help Scout.",
+        });
+      } catch (err) {
+        return errorResult(err, "createDraftConversation", api.userEmail);
       }
     },
   );
