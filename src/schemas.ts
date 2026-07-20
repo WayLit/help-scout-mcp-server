@@ -41,7 +41,7 @@ export const GetConversationSummaryShape = {
   conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
 };
 
-export const DraftReplyShape = {
+export const GatherReplyContextShape = {
   conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
   historyLimit: z
     .number()
@@ -53,6 +53,14 @@ export const DraftReplyShape = {
     .string()
     .optional()
     .describe("Optional extra instructions for the draft, e.g. tone or specific points to cover."),
+};
+
+export const DraftReplyShape = {
+  conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
+  replyText: z
+    .string()
+    .min(1)
+    .describe("The composed reply body to save as a Help Scout draft."),
 };
 
 export const AdvancedConversationSearchShape = {
@@ -136,6 +144,36 @@ export const AssignConversationShape = {
 export const MoveConversationShape = {
   conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
   mailboxId: z.number().int().min(0).describe("Target mailbox ID to move the conversation to"),
+};
+
+export const CreateDraftConversationShape = {
+  mailboxId: z.number().int().min(0).describe("Inbox to create the draft conversation in"),
+  customerId: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Existing Help Scout customer ID. Takes precedence over customerEmail if both are given.",
+    ),
+  customerEmail: z
+    .string()
+    .email()
+    .optional()
+    .describe(
+      "Customer email. Help Scout finds or creates the customer by this address if customerId is omitted.",
+    ),
+  customerFirstName: z
+    .string()
+    .optional()
+    .describe("Used only with customerEmail, when creating a new customer."),
+  customerLastName: z
+    .string()
+    .optional()
+    .describe("Used only with customerEmail, when creating a new customer."),
+  subject: z.string().min(1),
+  text: z.string().min(1).describe("The draft message body."),
+  tags: z.array(z.string()).optional(),
 };
 
 // ── Customer tools ─────────────────────────────────────────────────────────

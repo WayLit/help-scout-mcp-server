@@ -34,4 +34,12 @@ describe("buildInstructions", () => {
     expect(out).toContain("PII redaction is enabled by default");
     expect(out).toContain("REDACT_PII=false");
   });
+
+  it("documents the reply-drafting and new-conversation-draft tools as write operations that never send", () => {
+    const out = buildInstructions([]);
+    expect(out).toContain("gatherReplyContext");
+    expect(out).toContain("draftReply");
+    expect(out).toContain("createDraftConversation");
+    expect(out).toMatch(/draftReply and createDraftConversation are write operations/i);
+  });
 });
