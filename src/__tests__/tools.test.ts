@@ -10,7 +10,7 @@ const EXPECTED_TOOL_NAMES = [
   "searchInboxes",
   "searchConversations",
   "getConversationSummary",
-  "draftReply",
+  "gatherReplyContext",
   "getThreads",
   "whoami",
   "getServerTime",
@@ -38,6 +38,7 @@ function fakeApi() {
   return {
     get: vi.fn(),
     patch: vi.fn(),
+    post: vi.fn(),
     userEmail: "tester@example.com",
   };
 }
@@ -391,7 +392,7 @@ describe("structuredConversationFilter cursor pagination", () => {
   });
 });
 
-describe("draftReply", () => {
+describe("gatherReplyContext", () => {
   it("returns a brief with the latest customer message and resolved prior history", async () => {
     const { api, tools } = setupServer();
     api.get.mockImplementation(async (endpoint: string, params?: Record<string, unknown>) => {
@@ -441,7 +442,7 @@ describe("draftReply", () => {
       return {};
     });
 
-    const result = await tools.draftReply.handler(
+    const result = await tools.gatherReplyContext.handler(
       { conversationId: "100", historyLimit: 5 },
       {},
     );
@@ -473,7 +474,7 @@ describe("draftReply", () => {
       return { _embedded: { conversations: [] }, page: { totalElements: 0 } };
     });
 
-    const result = await tools.draftReply.handler(
+    const result = await tools.gatherReplyContext.handler(
       { conversationId: "100", historyLimit: 0, guidance: "Keep it under 3 sentences." },
       {},
     );

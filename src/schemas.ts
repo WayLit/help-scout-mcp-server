@@ -41,7 +41,7 @@ export const GetConversationSummaryShape = {
   conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
 };
 
-export const DraftReplyShape = {
+export const GatherReplyContextShape = {
   conversationId: z.string().regex(/^\d+$/, "Conversation ID must be numeric"),
   historyLimit: z
     .number()
