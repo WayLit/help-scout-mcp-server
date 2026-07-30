@@ -39,13 +39,13 @@
     "@cloudflare/workers-oauth-provider": "^0.8.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "agents": "^0.19.0",
-    "hono": "^4.12.31",
+    "hono": "^4.12.32",
     "jose": "^6.2.4",
-    "openredaction": "^1.1.2",
+    "openredaction": "^1.1.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260724.1",
+    "@cloudflare/workers-types": "^5.20260727.1",
     "oxfmt": "^0.60.0",
     "oxlint": "^1.75.0",
     "typescript": "^7.0.2",
