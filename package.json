@@ -39,7 +39,7 @@
     "@cloudflare/workers-oauth-provider": "^0.8.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "agents": "^0.20.1",
-    "hono": "^4.12.33",
+    "hono": "^4.12.34",
     "jose": "^6.2.6",
     "openredaction": "^1.1.5",
     "zod": "^4.4.3"
