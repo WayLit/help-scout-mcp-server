@@ -4,8 +4,8 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - preact@10.28.2
   - lodash@4.18.1
-  # Renovate security update: hono@4.12.18 || 4.12.25
-  - hono@4.12.18 || 4.12.25
+  # Renovate security update: hono@4.12.18 || 4.12.25 || 4.12.34
+  - hono@4.12.18 || 4.12.25 || 4.12.34
   # Renovate security update: axios@1.15.2 || 1.16.0
   - axios@1.15.2 || 1.16.0
   # Renovate security update: vitest@3.2.6
@@ -15,7 +15,7 @@ minimumReleaseAgeExclude:
 overrides:
   '@hono/node-server@<2.0.6': '>=2.0.12'
   tmp@<=0.2.3: '>=0.2.7'
-  hono@<4.12.12: '>=4.12.33'
+  hono@<4.12.12: '>=4.12.34'
 allowBuilds:
   core-js-pure: false
   esbuild: false
