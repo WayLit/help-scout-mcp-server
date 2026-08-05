@@ -95,7 +95,34 @@ First connection flow:
 
 If Help Scout later revokes or you rotate the key, tool calls will start failing with `REAUTH_REQUIRED`. Visit `https://<YOUR_HOSTNAME>/docs-api-key/enter` directly (no need to redo the client's OAuth flow) to update it.
 
-Tools are read/write: `listCollections`, `getCollection`, `createCollection`, `updateCollection`, `deleteCollection`, `listArticles`, `searchArticles`, `getArticle`, `createArticle`, `updateArticle`, `deleteArticle`. New articles default to `status: notpublished` so drafts can be reviewed before going live — pass `status: "published"` explicitly to publish immediately.
+Tools are read/write: `listCollections`, `getCollection`, `createCollection`, `updateCollection`, `deleteCollection`, `listArticles`, `searchArticles`, `getArticle`, `createArticle`, `updateArticle`, `deleteArticle`, `createArticleImageUpload`. New articles default to `status: notpublished` so drafts can be reviewed before going live — pass `status: "published"` explicitly to publish immediately.
+
+### Adding images to articles
+
+Image bytes never travel through a tool call — MCP arguments are JSON, so an
+image would have to be base64 the model types out character by character. The
+upload happens locally instead:
+
+1. `createArticleImageUpload(articleId)` returns an `uploadUrl`, a single-use
+   `uploadToken` (15-minute expiry, bound to that one article), and the size and
+   format limits.
+2. A local uploader POSTs the file to `uploadUrl` as `multipart/form-data` with
+   the image in a `file` field and `Authorization: Bearer <uploadToken>`. The
+   response is `{ filelink, filename, width, height }`.
+3. `getArticle`, insert `<img src="<filelink>">` into the body, and save with
+   `updateArticle`.
+
+Adding several images? Upload them all first, then apply every `<img>` tag in a
+**single** `updateArticle` call — `updateArticle` replaces the whole body, so one
+call per image would discard the previous insertions.
+
+Limits: 10 MB per image; PNG, JPEG, GIF, and WebP only. SVG is rejected because
+Help Scout serves assets from its own domain, which would make a scripted SVG
+stored XSS. Your Docs API key never leaves the worker — the uploader
+authenticates with the one-time token alone.
+
+The uploader ships with the Help Scout plugin in
+[WayLit/claude-plugins](https://github.com/WayLit/claude-plugins).
 
 ## Local development
 
