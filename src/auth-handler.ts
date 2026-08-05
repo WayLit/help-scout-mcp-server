@@ -18,6 +18,14 @@ import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provid
 
 import { HELPSCOUT_DOCS_API_BASE } from "./helpscout-docs-api";
 import { AccessAuthError, verifyAccessJwt } from "./access-jwt";
+import { recordToolCall } from "./audit";
+import {
+  MAX_UPLOAD_BYTES,
+  consumeUploadToken,
+  sniffImageMimeType,
+  uploadArticleImage,
+} from "./docs-assets";
+import { isHelpScoutApiError } from "./helpscout-api";
 import { logger, newRequestId } from "./logger";
 import type { Env, HelpScoutTokenRecord, Props } from "./types";
 import { createOAuthState, deleteOAuthState, readOAuthState } from "./workers-oauth-utils";
@@ -489,6 +497,143 @@ app.post("/docs-api-key/submit", async (c) => {
     email: identity.email,
     name: identity.name,
   });
+});
+
+/**
+ * Upload an inline image into a Docs article.
+ *
+ * Deliberately outside Cloudflare Access and outside the OAuth-protected MCP
+ * handlers: the single-use token minted by the `createArticleImageUpload` tool
+ * is the only credential, so a headless local uploader needs nothing
+ * configured. The token carries the identity and the target article, both bound
+ * server-side at mint time — see docs-assets.ts.
+ */
+app.post("/docs/assets/upload", async (c) => {
+  logger.setLevel(c.env.LOG_LEVEL);
+  const requestId = newRequestId();
+  const started = Date.now();
+
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  const record = token ? await consumeUploadToken(c.env, token) : null;
+  if (!record) {
+    logger.warn("docs upload: token rejected", { requestId });
+    return c.json(
+      {
+        error: "INVALID_UPLOAD_TOKEN",
+        message: "Upload token is unknown, already used, or expired. Mint a new one.",
+        requestId,
+      },
+      401,
+    );
+  }
+
+  // Check the declared length before parsing so an oversized body is refused
+  // without buffering it.
+  const declaredLength = Number(c.req.header("Content-Length") ?? "0");
+  if (declaredLength > MAX_UPLOAD_BYTES) {
+    return c.json(
+      {
+        error: "FILE_TOO_LARGE",
+        message: `Image exceeds the ${MAX_UPLOAD_BYTES}-byte limit.`,
+        requestId,
+      },
+      413,
+    );
+  }
+
+  let file: File;
+  try {
+    const form = await c.req.formData();
+    const candidate = form.get("file");
+    if (!(candidate instanceof File)) {
+      return c.json(
+        { error: "MISSING_FILE", message: "Expected a `file` field holding the image.", requestId },
+        400,
+      );
+    }
+    file = candidate;
+  } catch {
+    return c.json(
+      {
+        error: "INVALID_INPUT",
+        message: "Body must be multipart/form-data with a `file` field.",
+        requestId,
+      },
+      400,
+    );
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return c.json(
+      {
+        error: "FILE_TOO_LARGE",
+        message: `Image exceeds the ${MAX_UPLOAD_BYTES}-byte limit.`,
+        requestId,
+      },
+      413,
+    );
+  }
+
+  // Trust the bytes, not the declared Content-Type. SVG is rejected: Help
+  // Scout serves assets from its own domain, so a scripted SVG is stored XSS.
+  const sniffed = sniffImageMimeType(new Uint8Array(await file.arrayBuffer()));
+  if (!sniffed) {
+    logger.warn("docs upload: unsupported image type", {
+      requestId,
+      email: record.email,
+      declaredType: file.type,
+    });
+    return c.json(
+      {
+        error: "UNSUPPORTED_IMAGE_TYPE",
+        message: "Image must be PNG, JPEG, GIF, or WebP.",
+        requestId,
+      },
+      415,
+    );
+  }
+
+  try {
+    const asset = await uploadArticleImage(c.env, record, file);
+    logger.info("docs upload: asset stored", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+    });
+    await recordToolCall(c.env, {
+      email: record.email,
+      tool: "uploadArticleImage",
+      args: { articleId: record.articleId, fileName: record.fileName, bytes: file.size },
+      durationMs: Date.now() - started,
+      status: "ok",
+    });
+    return c.json(asset, 201);
+  } catch (err) {
+    const code = isHelpScoutApiError(err) ? err.code : "UNEXPECTED_ERROR";
+    const status = isHelpScoutApiError(err) && err.status ? err.status : 500;
+    logger.warn("docs upload: failed", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+      errorCode: code,
+    });
+    await recordToolCall(c.env, {
+      email: record.email,
+      tool: "uploadArticleImage",
+      args: { articleId: record.articleId, fileName: record.fileName, bytes: file.size },
+      durationMs: Date.now() - started,
+      status: "error",
+      errorCode: code,
+    });
+    return c.json(
+      {
+        error: code,
+        message: err instanceof Error ? err.message : String(err),
+        requestId,
+      },
+      status as 400,
+    );
+  }
 });
 
 export { app as AuthHandler };
