@@ -18,6 +18,19 @@ import type { Env } from "./types";
 export const UPLOAD_TOKEN_TTL_SECONDS = 900;
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
+/**
+ * Slack allowed on top of MAX_UPLOAD_BYTES when screening a declared
+ * `Content-Length`.
+ *
+ * That header measures the whole multipart body — boundary lines, part
+ * headers, the caller's file name, the closing boundary — not the image, so
+ * comparing it to MAX_UPLOAD_BYTES directly would 413 a legal file sitting
+ * within a few hundred bytes of the limit and burn its single-use token.
+ * Real overhead is a few hundred bytes; 8 KiB leaves room for a long name
+ * while still catching a body that is honestly, wildly oversized.
+ */
+export const MAX_MULTIPART_OVERHEAD_BYTES = 8 * 1024;
+
 const UPLOAD_TOKEN_PREFIX = "upload:";
 
 /**

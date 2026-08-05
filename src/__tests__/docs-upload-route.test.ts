@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AuthHandler } from "../auth-handler";
-import { mintUploadToken } from "../docs-assets";
+import { MAX_UPLOAD_BYTES, mintUploadToken } from "../docs-assets";
 import type { Env } from "../types";
 
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
@@ -44,6 +44,33 @@ function pngForm(bytes: Uint8Array = PNG_BYTES, name = "shot.png", type = "image
   const form = new FormData();
   form.set("file", new File([bytes], name, { type }), name);
   return form;
+}
+
+/**
+ * A parseable multipart upload carrying an explicit `Content-Length`.
+ *
+ * Serializes the form once so the boundary and the declared length can
+ * disagree the way a real oversized-looking-but-legal upload does.
+ */
+async function uploadRequestDeclaring(
+  token: string,
+  declaredLength: number,
+  form: FormData = pngForm(),
+): Promise<Request> {
+  const serialized = new Request("https://hs-mcp.example.com/docs/assets/upload", {
+    method: "POST",
+    body: form,
+  });
+  const body = await serialized.arrayBuffer();
+  return new Request("https://hs-mcp.example.com/docs/assets/upload", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": serialized.headers.get("Content-Type") as string,
+      "Content-Length": String(declaredLength),
+    },
+    body,
+  });
 }
 
 describe("POST /docs/assets/upload", () => {
@@ -144,6 +171,28 @@ describe("POST /docs/assets/upload", () => {
       expect(res.status).toBe(413);
       expect(await res.json()).toMatchObject({ error: "FILE_TOO_LARGE" });
       expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("accepts a file at the limit whose Content-Length is inflated by multipart overhead", async () => {
+    const { env } = fakeEnv();
+    const { token } = await mintUploadToken(env, "tester@example.com", "42");
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ filelink: "u", filename: "f" }, { status: 201 }));
+
+    try {
+      // Boundary lines and part headers push a legal 10 MiB file's body over
+      // MAX_UPLOAD_BYTES; only `file.size` decides.
+      const res = await AuthHandler.request(
+        await uploadRequestDeclaring(token, MAX_UPLOAD_BYTES + 240),
+        undefined,
+        env,
+      );
+      expect(res.status).toBe(201);
+      expect(fetchSpy).toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
     }

@@ -348,12 +348,20 @@ export function registerDocsTools(
           );
         }
         // Fail here rather than after the user's local uploader has already run.
-        await api.get<{ article: unknown }>(`/articles/${input.articleId}`);
+        // Also resolves the id to bind into the token: GET /articles/{…} takes
+        // an id or a sequential number, but POST /assets/article takes only the
+        // id, so echoing back whatever the caller passed would let an
+        // article-number mint succeed and then fail at upload time — with the
+        // single-use token already burned.
+        const { article } = await api.get<{ article?: { id?: string } }>(
+          `/articles/${input.articleId}`,
+        );
+        const articleId = article?.id ?? input.articleId;
 
         const { token, expiresAt } = await mintUploadToken(
           deps.env,
           api.userEmail,
-          input.articleId,
+          articleId,
           input.fileName,
         );
         const origin = deps.getPublicOrigin();
@@ -362,7 +370,7 @@ export function registerDocsTools(
           uploadUrl: origin ? `${origin}${uploadPath}` : uploadPath,
           uploadToken: token,
           expiresAt,
-          articleId: input.articleId,
+          articleId,
           maxBytes: MAX_UPLOAD_BYTES,
           allowedFormats: ["png", "jpeg", "gif", "webp"],
           usage:

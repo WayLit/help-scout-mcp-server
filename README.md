@@ -106,7 +106,8 @@ upload happens locally instead:
 1. `createArticleImageUpload(articleId)` returns an `uploadUrl`, a single-use
    `uploadToken` (15-minute expiry, bound to that one article), and the size and
    format limits. The article must already exist; the tool fails fast if the
-   article ID doesn't resolve.
+   article ID doesn't resolve. A sequential article number works too — the
+   token binds to the resolved article ID, which the upload endpoint requires.
 2. A local uploader POSTs the file to `uploadUrl` as `multipart/form-data` with
    the image in a `file` field and `Authorization: Bearer <uploadToken>`. The
    response is `{ filelink, filename, width, height }`. If the upload fails, the

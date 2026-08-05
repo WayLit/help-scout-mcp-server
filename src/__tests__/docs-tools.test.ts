@@ -205,6 +205,35 @@ describe("createArticleImageUpload", () => {
     expect(kv.store.size).toBe(0);
   });
 
+  it("mints against the resolved article id when the caller passes an article number", async () => {
+    const { api, tools, kv } = setupServer();
+    // GET /articles/{id or number} accepts both; POST /assets/article takes
+    // only the id, so the number must not reach the token record.
+    api.get.mockResolvedValue({ article: { id: "5215163545667acd25394b5c", number: 121 } });
+
+    const result = await tools.createArticleImageUpload.handler({ articleId: "121" }, {});
+    const payload = parseResult(result) as { uploadToken: string; articleId: string };
+
+    expect(api.get).toHaveBeenCalledWith("/articles/121");
+    expect(payload.articleId).toBe("5215163545667acd25394b5c");
+    expect(JSON.parse(kv.store.get(`upload:${payload.uploadToken}`) as string)).toMatchObject({
+      articleId: "5215163545667acd25394b5c",
+    });
+  });
+
+  it("falls back to the caller's articleId when the article payload carries no id", async () => {
+    const { api, tools, kv } = setupServer();
+    api.get.mockResolvedValue({ article: { name: "Refunds" } });
+
+    const result = await tools.createArticleImageUpload.handler({ articleId: "42" }, {});
+    const payload = parseResult(result) as { uploadToken: string; articleId: string };
+
+    expect(payload.articleId).toBe("42");
+    expect(JSON.parse(kv.store.get(`upload:${payload.uploadToken}`) as string)).toMatchObject({
+      articleId: "42",
+    });
+  });
+
   it("fails with REAUTH_REQUIRED when no Docs API key is on file", async () => {
     const { api, tools, kv } = setupServer();
     api.hasApiKey.mockResolvedValue(false);

@@ -20,6 +20,7 @@ import { HELPSCOUT_DOCS_API_BASE } from "./helpscout-docs-api";
 import { AccessAuthError, verifyAccessJwt } from "./access-jwt";
 import { recordToolCall } from "./audit";
 import {
+  MAX_MULTIPART_OVERHEAD_BYTES,
   MAX_UPLOAD_BYTES,
   consumeUploadToken,
   sanitizeUploadFileName,
@@ -532,8 +533,11 @@ app.post("/docs/assets/upload", async (c) => {
   // before buffering the body. An absent or understated header falls
   // through to formData() below, which buffers the whole body regardless —
   // the file.size check further down is what actually enforces the limit.
+  // The allowance matters: Content-Length covers the whole multipart body,
+  // so a legal file at the limit declares more than MAX_UPLOAD_BYTES and
+  // must not be rejected here.
   const declaredLength = Number(c.req.header("Content-Length") ?? "0");
-  if (declaredLength > MAX_UPLOAD_BYTES) {
+  if (declaredLength > MAX_UPLOAD_BYTES + MAX_MULTIPART_OVERHEAD_BYTES) {
     logger.warn("docs upload: declared Content-Length too large", {
       requestId,
       email: record.email,
