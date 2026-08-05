@@ -7,7 +7,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
+import { MAX_UPLOAD_BYTES, mintUploadToken } from "./docs-assets";
 import {
+  CreateArticleImageUploadShape,
   CreateArticleShape,
   CreateCollectionShape,
   DeleteArticleShape,
@@ -20,9 +22,10 @@ import {
   UpdateArticleShape,
   UpdateCollectionShape,
 } from "./docs-schemas";
-import { isHelpScoutApiError } from "./helpscout-api";
+import { HelpScoutApiError, isHelpScoutApiError } from "./helpscout-api";
 import type { HelpScoutDocsAPI } from "./helpscout-docs-api";
 import { logger, newRequestId } from "./logger";
+import type { Env } from "./types";
 
 function textResult(payload: unknown): CallToolResult {
   return {
@@ -96,7 +99,22 @@ interface ArticlesEnvelope {
   articles: { page: number; pages: number; count: number; items: unknown[] };
 }
 
-export function registerDocsTools(server: McpServer, api: HelpScoutDocsAPI): void {
+/** Collaborators the Docs tools need beyond the API client. */
+export interface DocsToolDeps {
+  env: Env;
+  /**
+   * Public origin of this worker, captured from the live request in
+   * HelpScoutDocsMCP.fetch(). Returns undefined only if no request has been
+   * served yet, in which case the upload URL is returned as a bare path.
+   */
+  getPublicOrigin: () => string | undefined;
+}
+
+export function registerDocsTools(
+  server: McpServer,
+  api: HelpScoutDocsAPI,
+  deps: DocsToolDeps,
+): void {
   // ── listCollections ─────────────────────────────────────────────────
   server.tool(
     "listCollections",
@@ -280,7 +298,7 @@ export function registerDocsTools(server: McpServer, api: HelpScoutDocsAPI): voi
   // ── updateArticle ────────────────────────────────────────────────────
   server.tool(
     "updateArticle",
-    "Update a Docs article. Only provided fields change — omit fields to leave them as-is. Set status to \"published\" to publish, \"notpublished\" to unpublish.",
+    'Update a Docs article. Only provided fields change — omit fields to leave them as-is. Set status to "published" to publish, "notpublished" to unpublish.',
     UpdateArticleShape,
     async (input): Promise<CallToolResult> => {
       try {
@@ -304,6 +322,60 @@ export function registerDocsTools(server: McpServer, api: HelpScoutDocsAPI): voi
         return textResult({ success: true, articleId: input.articleId });
       } catch (err) {
         return errorResult(err, "deleteArticle", api.userEmail);
+      }
+    },
+  );
+
+  // ── createArticleImageUpload ─────────────────────────────────────────
+  server.tool(
+    "createArticleImageUpload",
+    "Get a one-time URL for uploading an image into a Docs article. Image bytes " +
+      "never pass through this tool — it returns an uploadUrl and uploadToken that a " +
+      "local uploader posts the file to, and that upload returns the image's filelink. " +
+      "To place the image, read the article with getArticle, insert an <img> tag " +
+      "pointing at the filelink, and save with updateArticle. When adding several " +
+      "images, upload them all first and then apply every <img> tag in one " +
+      "updateArticle call — updateArticle replaces the whole body, so one call per " +
+      "image would discard the previous insertions.",
+    CreateArticleImageUploadShape,
+    async (input): Promise<CallToolResult> => {
+      try {
+        if (!(await api.hasApiKey())) {
+          throw new HelpScoutApiError(
+            "REAUTH_REQUIRED",
+            "Help Scout Docs API key required. Visit /docs-api-key/enter to connect one.",
+            401,
+          );
+        }
+        // Fail here rather than after the user's local uploader has already run.
+        await api.get<{ article: unknown }>(`/articles/${input.articleId}`);
+
+        const { token, expiresAt } = await mintUploadToken(
+          deps.env,
+          api.userEmail,
+          input.articleId,
+          input.fileName,
+        );
+        const origin = deps.getPublicOrigin();
+        const uploadPath = "/docs/assets/upload";
+        return textResult({
+          uploadUrl: origin ? `${origin}${uploadPath}` : uploadPath,
+          uploadToken: token,
+          expiresAt,
+          articleId: input.articleId,
+          maxBytes: MAX_UPLOAD_BYTES,
+          allowedFormats: ["png", "jpeg", "gif", "webp"],
+          usage:
+            "POST the image to uploadUrl as multipart/form-data with the file in a " +
+            "`file` field and header `Authorization: Bearer <uploadToken>`. The token " +
+            "is single-use and expires at expiresAt. The response contains `filelink`. " +
+            'Then getArticle, splice <img src="<filelink>"> into the body, and save ' +
+            "with updateArticle. Uploading several images? Collect every filelink " +
+            "first, then apply them all in one updateArticle call — updateArticle " +
+            "overwrites the whole body.",
+        });
+      } catch (err) {
+        return errorResult(err, "createArticleImageUpload", api.userEmail);
       }
     },
   );
