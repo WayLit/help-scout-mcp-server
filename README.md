@@ -33,7 +33,7 @@ Paste the returned IDs into `wrangler.jsonc` (`id` and `preview_id`).
 
 ### 2. Cloudflare Access on the browser-interactive endpoints
 
-Cloudflare Access handles employee identity. Scope it to the worker's **browser-interactive paths only** — `/authorize` (both connectors' OAuth entry), `/callback/helpscout` (the Help Scout OAuth redirect — the worker re-verifies the Access JWT here to bind the callback to the identity that started the flow, on top of the one-time OAuth state token), and `/docs-api-key/*` (the Docs API key entry/rotation form, gated separately since it's not part of the OAuth code path). The MCP endpoints (`/mcp`, `/docs/mcp`, `/token`) are left un-fronted because they're protected by the OAuth bearer token the worker issues *after* `/authorize`. Scoping this way is what lets MCP clients log in through an ordinary browser flow instead of carrying a pre-shared service token.
+Cloudflare Access handles employee identity. Scope it to the worker's **browser-interactive paths only** — `/authorize` (both connectors' OAuth entry), `/callback/helpscout` (the Help Scout OAuth redirect — the worker re-verifies the Access JWT here to bind the callback to the identity that started the flow, on top of the one-time OAuth state token), and `/docs-api-key/*` (the Docs API key entry/rotation form, gated separately since it's not part of the OAuth code path). The MCP endpoints (`/mcp`, `/docs/mcp`, `/token`) and the image upload endpoint (`/docs/assets/upload`) are left un-fronted because they're protected by bearer tokens the worker issues *after* `/authorize`. Scoping this way is what lets MCP clients log in through an ordinary browser flow instead of carrying a pre-shared service token. **Important:** see step 3 of the [deployment checklist](./DEPLOYMENT.md#3-set-up-cloudflare-access-identity) for a critical warning about the `/docs/assets/upload` endpoint.
 
 Pick a hostname for your deployment (e.g. `helpscout-mcp.example.com`) and set it as the `routes` pattern in `wrangler.jsonc`. The rest of this section uses `<YOUR_HOSTNAME>` to mean that value.
 
@@ -105,12 +105,14 @@ upload happens locally instead:
 
 1. `createArticleImageUpload(articleId)` returns an `uploadUrl`, a single-use
    `uploadToken` (15-minute expiry, bound to that one article), and the size and
-   format limits.
+   format limits. The article must already exist; the tool fails fast if the
+   article ID doesn't resolve.
 2. A local uploader POSTs the file to `uploadUrl` as `multipart/form-data` with
    the image in a `file` field and `Authorization: Bearer <uploadToken>`. The
-   response is `{ filelink, filename, width, height }`.
-3. `getArticle`, insert `<img src="<filelink>">` into the body, and save with
-   `updateArticle`.
+   response is `{ filelink, filename, width, height }`. If the upload fails, the
+   token is consumed regardless — mint a fresh token to retry.
+3. Call `getArticle`, insert `<img src="<filelink>">` into the body, and save
+   with `updateArticle`.
 
 Adding several images? Upload them all first, then apply every `<img>` tag in a
 **single** `updateArticle` call — `updateArticle` replaces the whole body, so one
