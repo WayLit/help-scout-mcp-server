@@ -73,6 +73,45 @@ async function uploadRequestDeclaring(
   });
 }
 
+/**
+ * A chunked upload: a streamed body carrying no `Content-Length`, so the
+ * declared-length screen has nothing to check and only the metered parse
+ * stands between the caller and the isolate's memory.
+ *
+ * `pulls` counts how many chunks the source was actually asked for, which is
+ * how a test tells "rejected after metering" from "drained, then rejected".
+ * The init cast carries `duplex`, which Node requires for a streaming request
+ * body and workerd ignores.
+ */
+function chunkedUploadRequest(
+  token: string,
+  contentType: string,
+  chunks: Uint8Array[],
+  pulls = { count: 0 },
+): { request: Request; pulls: { count: number } } {
+  let next = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (next >= chunks.length) {
+        controller.close();
+        return;
+      }
+      pulls.count += 1;
+      controller.enqueue(chunks[next++]);
+    },
+  });
+  const init = {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType },
+    body,
+    duplex: "half",
+  } as unknown as RequestInit;
+  return {
+    request: new Request("https://hs-mcp.example.com/docs/assets/upload", init),
+    pulls,
+  };
+}
+
 describe("POST /docs/assets/upload", () => {
   it("uploads the file and returns Help Scout's asset payload", async () => {
     const { env } = fakeEnv();
@@ -193,6 +232,61 @@ describe("POST /docs/assets/upload", () => {
       );
       expect(res.status).toBe(201);
       expect(fetchSpy).toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("accepts a chunked upload that declares no Content-Length", async () => {
+    const { env } = fakeEnv();
+    const { token } = await mintUploadToken(env, "tester@example.com", "42");
+    const serialized = new Request("https://hs-mcp.example.com/docs/assets/upload", {
+      method: "POST",
+      body: pngForm(),
+    });
+    const body = new Uint8Array(await serialized.arrayBuffer());
+    const half = Math.floor(body.length / 2);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ filelink: "u", filename: "f" }, { status: 201 }));
+
+    try {
+      const { request } = chunkedUploadRequest(
+        token,
+        serialized.headers.get("Content-Type") as string,
+        [body.subarray(0, half), body.subarray(half)],
+      );
+      const res = await AuthHandler.request(request, undefined, env);
+      expect(res.status).toBe(201);
+      expect(fetchSpy).toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("abandons a chunked body once it passes the cap instead of buffering it all", async () => {
+    const { env } = fakeEnv();
+    const { token } = await mintUploadToken(env, "tester@example.com", "42");
+    // One buffer enqueued repeatedly: the stream offers 16 MiB but the test
+    // only ever holds 1 MiB, and the cap (10 MiB + overhead) should stop the
+    // pulls around the 11th.
+    const oneMiB = new Uint8Array(1024 * 1024);
+    const chunks = Array.from({ length: 16 }, () => oneMiB);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    try {
+      const { request, pulls } = chunkedUploadRequest(
+        token,
+        "multipart/form-data; boundary=x",
+        chunks,
+      );
+      const res = await AuthHandler.request(request, undefined, env);
+      expect(res.status).toBe(413);
+      expect(await res.json()).toMatchObject({ error: "FILE_TOO_LARGE" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      // 11 pulls trip the cap, plus a chunk of stream read-ahead. The point is
+      // that the remaining ~4 MiB were never asked for.
+      expect(pulls.count).toBeLessThanOrEqual(13);
     } finally {
       fetchSpy.mockRestore();
     }

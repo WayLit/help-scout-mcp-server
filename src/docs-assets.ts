@@ -19,17 +19,72 @@ export const UPLOAD_TOKEN_TTL_SECONDS = 900;
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 /**
- * Slack allowed on top of MAX_UPLOAD_BYTES when screening a declared
- * `Content-Length`.
+ * Slack allowed on top of MAX_UPLOAD_BYTES when screening a whole multipart
+ * body — both the declared `Content-Length` and the metered stream in
+ * `parseBoundedFormData`.
  *
- * That header measures the whole multipart body — boundary lines, part
- * headers, the caller's file name, the closing boundary — not the image, so
- * comparing it to MAX_UPLOAD_BYTES directly would 413 a legal file sitting
- * within a few hundred bytes of the limit and burn its single-use token.
- * Real overhead is a few hundred bytes; 8 KiB leaves room for a long name
- * while still catching a body that is honestly, wildly oversized.
+ * A body measures more than its image: boundary lines, part headers, the
+ * caller's file name, the closing boundary. Comparing that total to
+ * MAX_UPLOAD_BYTES directly would 413 a legal file sitting within a few
+ * hundred bytes of the limit and burn its single-use token. Real overhead is a
+ * few hundred bytes; 8 KiB leaves room for a long name while still catching a
+ * body that is wildly oversized.
  */
 export const MAX_MULTIPART_OVERHEAD_BYTES = 8 * 1024;
+
+/** Thrown by `parseBoundedFormData` when a body outgrows the cap mid-stream. */
+export class UploadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Multipart body exceeded ${maxBytes} bytes.`);
+    this.name = "UploadTooLargeError";
+  }
+}
+
+/**
+ * Parse a multipart body without letting it buffer past `maxBytes`.
+ *
+ * `formData()` reads the whole body into memory before any check can look at
+ * it, and a request that declares no `Content-Length` — a chunked upload, say
+ * — offers nothing for the route to screen beforehand. Cloudflare accepts
+ * request bodies up to 100 MB (500 MB on Enterprise) while an isolate gets
+ * 128 MB of memory shared across every request in flight on it, so an
+ * unbounded parse here could push the isolate over that ceiling and take
+ * unrelated requests down with it. Metering the bytes as they stream through
+ * caps the exposure at the same allowance the declared-length screen uses.
+ *
+ * `exceeded` is tracked separately because the rejection `formData()` surfaces
+ * for an errored source is the runtime's own error, not the one handed to
+ * `controller.error`.
+ */
+export async function parseBoundedFormData(request: Request, maxBytes: number): Promise<FormData> {
+  // Nothing to meter — let formData() raise its own parse failure.
+  if (!request.body) return await request.formData();
+
+  let seen = 0;
+  let exceeded = false;
+  const bounded = request.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > maxBytes) {
+          exceeded = true;
+          controller.error(new UploadTooLargeError(maxBytes));
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+
+  try {
+    return await new Response(bounded, {
+      headers: { "Content-Type": request.headers.get("Content-Type") ?? "" },
+    }).formData();
+  } catch (err) {
+    if (exceeded) throw new UploadTooLargeError(maxBytes);
+    throw err;
+  }
+}
 
 const UPLOAD_TOKEN_PREFIX = "upload:";
 

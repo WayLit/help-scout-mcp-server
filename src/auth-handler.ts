@@ -22,7 +22,9 @@ import { recordToolCall } from "./audit";
 import {
   MAX_MULTIPART_OVERHEAD_BYTES,
   MAX_UPLOAD_BYTES,
+  UploadTooLargeError,
   consumeUploadToken,
+  parseBoundedFormData,
   sanitizeUploadFileName,
   sniffImageMimeType,
   uploadArticleImage,
@@ -529,15 +531,17 @@ app.post("/docs/assets/upload", async (c) => {
     );
   }
 
-  // Advisory only: catches a truthfully-declared oversized Content-Length
-  // before buffering the body. An absent or understated header falls
-  // through to formData() below, which buffers the whole body regardless —
-  // the file.size check further down is what actually enforces the limit.
-  // The allowance matters: Content-Length covers the whole multipart body,
-  // so a legal file at the limit declares more than MAX_UPLOAD_BYTES and
-  // must not be rejected here.
+  // Same allowance for the two size screens below: Content-Length (and the
+  // metered stream) cover the whole multipart body, so a legal file at the
+  // limit measures more than MAX_UPLOAD_BYTES and must survive both.
+  const maxBodyBytes = MAX_UPLOAD_BYTES + MAX_MULTIPART_OVERHEAD_BYTES;
+
+  // A cheap first screen: a truthfully-declared oversized body is rejected
+  // without reading a byte. An absent or lying header just falls through to
+  // parseBoundedFormData, which meters the stream instead. `file.size` below
+  // is still what enforces the actual per-image limit.
   const declaredLength = Number(c.req.header("Content-Length") ?? "0");
-  if (declaredLength > MAX_UPLOAD_BYTES + MAX_MULTIPART_OVERHEAD_BYTES) {
+  if (declaredLength > maxBodyBytes) {
     logger.warn("docs upload: declared Content-Length too large", {
       requestId,
       email: record.email,
@@ -556,7 +560,7 @@ app.post("/docs/assets/upload", async (c) => {
 
   let file: File;
   try {
-    const form = await c.req.formData();
+    const form = await parseBoundedFormData(c.req.raw, maxBodyBytes);
     const candidate = form.get("file");
     if (!(candidate instanceof File)) {
       logger.warn("docs upload: missing file field", {
@@ -570,7 +574,23 @@ app.post("/docs/assets/upload", async (c) => {
       );
     }
     file = candidate;
-  } catch {
+  } catch (err) {
+    if (err instanceof UploadTooLargeError) {
+      logger.warn("docs upload: body exceeded the cap mid-stream", {
+        requestId,
+        email: record.email,
+        articleId: record.articleId,
+        maxBodyBytes,
+      });
+      return c.json(
+        {
+          error: "FILE_TOO_LARGE",
+          message: `Image exceeds the ${MAX_UPLOAD_BYTES}-byte limit.`,
+          requestId,
+        },
+        413,
+      );
+    }
     logger.warn("docs upload: unparseable body", {
       requestId,
       email: record.email,
