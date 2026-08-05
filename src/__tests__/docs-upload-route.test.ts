@@ -125,21 +125,28 @@ describe("POST /docs/assets/upload", () => {
   it("rejects an oversized Content-Length with 413 before parsing the body", async () => {
     const { env } = fakeEnv();
     const { token } = await mintUploadToken(env, "tester@example.com", "42");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    const res = await AuthHandler.request(
-      new Request("https://hs-mcp.example.com/docs/assets/upload", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "multipart/form-data; boundary=x",
-          "Content-Length": String(11 * 1024 * 1024),
-        },
-        body: "ignored",
-      }),
-      undefined,
-      env,
-    );
-    expect(res.status).toBe(413);
+    try {
+      const res = await AuthHandler.request(
+        new Request("https://hs-mcp.example.com/docs/assets/upload", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "multipart/form-data; boundary=x",
+            "Content-Length": String(11 * 1024 * 1024),
+          },
+          body: "ignored",
+        }),
+        undefined,
+        env,
+      );
+      expect(res.status).toBe(413);
+      expect(await res.json()).toMatchObject({ error: "FILE_TOO_LARGE" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("rejects a request with no file field with 400", async () => {
@@ -147,10 +154,42 @@ describe("POST /docs/assets/upload", () => {
     const { token } = await mintUploadToken(env, "tester@example.com", "42");
     const form = new FormData();
     form.set("notafile", "hello");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    const res = await AuthHandler.request(uploadRequest(token, form), undefined, env);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: "MISSING_FILE" });
+    try {
+      const res = await AuthHandler.request(uploadRequest(token, form), undefined, env);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "MISSING_FILE" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("rejects an unparseable (non-multipart) body with 400 INVALID_INPUT", async () => {
+    const { env } = fakeEnv();
+    const { token } = await mintUploadToken(env, "tester@example.com", "42");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    try {
+      const res = await AuthHandler.request(
+        new Request("https://hs-mcp.example.com/docs/assets/upload", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ not: "multipart" }),
+        }),
+        undefined,
+        env,
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "INVALID_INPUT" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("rejects bytes whose magic number is not an allowed image with 415", async () => {
@@ -158,10 +197,16 @@ describe("POST /docs/assets/upload", () => {
     const { token } = await mintUploadToken(env, "tester@example.com", "42");
     // Declares image/png but the bytes are HTML.
     const form = pngForm(new TextEncoder().encode("<!doctype html><script>x</script>"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    const res = await AuthHandler.request(uploadRequest(token, form), undefined, env);
-    expect(res.status).toBe(415);
-    expect(await res.json()).toMatchObject({ error: "UNSUPPORTED_IMAGE_TYPE" });
+    try {
+      const res = await AuthHandler.request(uploadRequest(token, form), undefined, env);
+      expect(res.status).toBe(415);
+      expect(await res.json()).toMatchObject({ error: "UNSUPPORTED_IMAGE_TYPE" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("rejects SVG with 415", async () => {
@@ -169,12 +214,40 @@ describe("POST /docs/assets/upload", () => {
     const { token } = await mintUploadToken(env, "tester@example.com", "42");
     const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
     const form = pngForm(svg, "x.svg", "image/svg+xml");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    const res = await AuthHandler.request(uploadRequest(token, form), undefined, env);
-    expect(res.status).toBe(415);
+    try {
+      const res = await AuthHandler.request(uploadRequest(token, form), undefined, env);
+      expect(res.status).toBe(415);
+      expect(await res.json()).toMatchObject({ error: "UNSUPPORTED_IMAGE_TYPE" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
-  it("surfaces a Help Scout failure with its mapped status", async () => {
+  it("forwards the sniffed content type to Help Scout, not the caller-declared one", async () => {
+    const { env } = fakeEnv();
+    const { token } = await mintUploadToken(env, "tester@example.com", "42");
+    // Genuine PNG bytes, but declares image/gif.
+    const form = pngForm(PNG_BYTES, "shot.gif", "image/gif");
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ filelink: "u", filename: "f" }, { status: 201 }));
+
+    try {
+      const res = await AuthHandler.request(uploadRequest(token, form), undefined, env);
+      expect(res.status).toBe(201);
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      const sentForm = init.body as FormData;
+      const sentFile = sentForm.get("file") as File;
+      expect(sentFile.type).toBe("image/png");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("surfaces a Help Scout failure with its mapped status, without echoing the upstream body", async () => {
     const { env } = fakeEnv();
     const { token } = await mintUploadToken(env, "tester@example.com", "42");
     const fetchSpy = vi
@@ -184,7 +257,27 @@ describe("POST /docs/assets/upload", () => {
     try {
       const res = await AuthHandler.request(uploadRequest(token, pngForm()), undefined, env);
       expect(res.status).toBe(404);
-      expect(await res.json()).toMatchObject({ error: "NOT_FOUND" });
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body).toMatchObject({ error: "NOT_FOUND" });
+      expect(body.message).not.toContain("no such article");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("returns a fixed message for a non-HelpScoutApiError failure, not the raw internal error", async () => {
+    const { env } = fakeEnv();
+    const { token } = await mintUploadToken(env, "tester@example.com", "42");
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("ECONNRESET: internal stack detail"));
+
+    try {
+      const res = await AuthHandler.request(uploadRequest(token, pngForm()), undefined, env);
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as { error: string; message: string };
+      expect(body).toMatchObject({ error: "UNEXPECTED_ERROR", message: "Upload failed." });
+      expect(body.message).not.toContain("ECONNRESET");
     } finally {
       fetchSpy.mockRestore();
     }

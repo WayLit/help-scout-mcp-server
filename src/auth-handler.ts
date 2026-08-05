@@ -527,10 +527,18 @@ app.post("/docs/assets/upload", async (c) => {
     );
   }
 
-  // Check the declared length before parsing so an oversized body is refused
-  // without buffering it.
+  // Advisory only: catches a truthfully-declared oversized Content-Length
+  // before buffering the body. An absent or understated header falls
+  // through to formData() below, which buffers the whole body regardless —
+  // the file.size check further down is what actually enforces the limit.
   const declaredLength = Number(c.req.header("Content-Length") ?? "0");
   if (declaredLength > MAX_UPLOAD_BYTES) {
+    logger.warn("docs upload: declared Content-Length too large", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+      declaredLength,
+    });
     return c.json(
       {
         error: "FILE_TOO_LARGE",
@@ -546,6 +554,11 @@ app.post("/docs/assets/upload", async (c) => {
     const form = await c.req.formData();
     const candidate = form.get("file");
     if (!(candidate instanceof File)) {
+      logger.warn("docs upload: missing file field", {
+        requestId,
+        email: record.email,
+        articleId: record.articleId,
+      });
       return c.json(
         { error: "MISSING_FILE", message: "Expected a `file` field holding the image.", requestId },
         400,
@@ -553,6 +566,11 @@ app.post("/docs/assets/upload", async (c) => {
     }
     file = candidate;
   } catch {
+    logger.warn("docs upload: unparseable body", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+    });
     return c.json(
       {
         error: "INVALID_INPUT",
@@ -564,6 +582,12 @@ app.post("/docs/assets/upload", async (c) => {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
+    logger.warn("docs upload: file too large", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+      bytes: file.size,
+    });
     return c.json(
       {
         error: "FILE_TOO_LARGE",
@@ -576,12 +600,25 @@ app.post("/docs/assets/upload", async (c) => {
 
   // Trust the bytes, not the declared Content-Type. SVG is rejected: Help
   // Scout serves assets from its own domain, so a scripted SVG is stored XSS.
-  const sniffed = sniffImageMimeType(new Uint8Array(await file.arrayBuffer()));
+  // Read the bytes once, sniff them, then forward a rebuilt File that carries
+  // the sniffed (trustworthy) type instead of the caller-declared one, so a
+  // mislabeled-but-honest upload doesn't propagate its wrong declared type
+  // upstream either.
+  const bytes = await file.arrayBuffer();
+  const sniffed = sniffImageMimeType(new Uint8Array(bytes));
   if (!sniffed) {
     logger.warn("docs upload: unsupported image type", {
       requestId,
       email: record.email,
       declaredType: file.type,
+    });
+    await recordToolCall(c.env, {
+      email: record.email,
+      tool: "uploadArticleImage",
+      args: { articleId: record.articleId, fileName: record.fileName, bytes: file.size },
+      durationMs: Date.now() - started,
+      status: "error",
+      errorCode: "UNSUPPORTED_IMAGE_TYPE",
     });
     return c.json(
       {
@@ -592,9 +629,10 @@ app.post("/docs/assets/upload", async (c) => {
       415,
     );
   }
+  const safeFile = new File([bytes], record.fileName ?? file.name, { type: sniffed });
 
   try {
-    const asset = await uploadArticleImage(c.env, record, file);
+    const asset = await uploadArticleImage(c.env, record, safeFile);
     logger.info("docs upload: asset stored", {
       requestId,
       email: record.email,
@@ -611,11 +649,20 @@ app.post("/docs/assets/upload", async (c) => {
   } catch (err) {
     const code = isHelpScoutApiError(err) ? err.code : "UNEXPECTED_ERROR";
     const status = isHelpScoutApiError(err) && err.status ? err.status : 500;
+    // Never relay upstream response bodies or raw internal error text to the
+    // token holder. Help Scout's error bodies/WAF pages can echo request
+    // details — and docs-assets.ts puts the Docs API key in the very form
+    // body a 4xx/5xx from that endpoint is erroring on — while a leaked
+    // token's holder is not necessarily the key's owner. The error code and
+    // requestId already give the caller everything actionable; full detail
+    // goes to the log line below instead of the response.
+    const detail = err instanceof Error ? err.message : String(err);
     logger.warn("docs upload: failed", {
       requestId,
       email: record.email,
       articleId: record.articleId,
       errorCode: code,
+      detail,
     });
     await recordToolCall(c.env, {
       email: record.email,
@@ -628,7 +675,7 @@ app.post("/docs/assets/upload", async (c) => {
     return c.json(
       {
         error: code,
-        message: err instanceof Error ? err.message : String(err),
+        message: isHelpScoutApiError(err) ? "Help Scout rejected the upload." : "Upload failed.",
         requestId,
       },
       status as 400,
