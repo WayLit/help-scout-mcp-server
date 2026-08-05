@@ -16,19 +16,15 @@
 import { Hono } from "hono";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 
+import { HELPSCOUT_DOCS_API_BASE } from "./helpscout-docs-api";
 import { AccessAuthError, verifyAccessJwt } from "./access-jwt";
 import { logger, newRequestId } from "./logger";
 import type { Env, HelpScoutTokenRecord, Props } from "./types";
-import {
-  createOAuthState,
-  deleteOAuthState,
-  readOAuthState,
-} from "./workers-oauth-utils";
+import { createOAuthState, deleteOAuthState, readOAuthState } from "./workers-oauth-utils";
 
 const HELPSCOUT_AUTHORIZE_URL =
   "https://secure.helpscout.net/authentication/authorizeClientApplication";
 const HELPSCOUT_TOKEN_URL = "https://api.helpscout.net/v2/oauth2/token";
-const HELPSCOUT_DOCS_API_BASE = "https://docsapi.helpscout.net/v1";
 
 type Bindings = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
@@ -329,7 +325,10 @@ app.get("/authorize", async (c) => {
 
   // If the user already has valid HS tokens, skip the HS consent leg.
   if (await userHasValidTokens(c.env, identity.email)) {
-    logger.info("authorize: existing HS tokens, completing auth", { requestId, email: identity.email });
+    logger.info("authorize: existing HS tokens, completing auth", {
+      requestId,
+      email: identity.email,
+    });
     return completeAuth(c.env, oauthReqInfo, {
       email: identity.email,
       name: identity.name,

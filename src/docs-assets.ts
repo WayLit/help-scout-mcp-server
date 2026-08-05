@@ -11,6 +11,7 @@
  * is constructed with a DurableObjectStorage for GET caching, and the upload
  * route runs in the worker where no DO storage exists. Uploads need no cache.
  */
+import { HELPSCOUT_DOCS_API_BASE, fetchDocsApiKey } from "./helpscout-docs-api";
 import { HelpScoutApiError } from "./helpscout-api";
 import type { Env } from "./types";
 
@@ -105,37 +106,12 @@ export function sniffImageMimeType(bytes: Uint8Array): string | null {
   return null;
 }
 
-const HELPSCOUT_DOCS_API_BASE = "https://docsapi.helpscout.net/v1";
-
 /** Help Scout's 201 response from POST /assets/article. */
 export interface UploadedAsset {
   filelink: string;
   filename: string;
   width?: number;
   height?: number;
-}
-
-/** Read the user's Docs API key out of their mailbox DO (see index.ts:200). */
-async function fetchDocsApiKey(env: Env, email: string): Promise<string> {
-  const id = env.MCP_OBJECT.idFromName(email);
-  const stub = env.MCP_OBJECT.get(id);
-  const res = await stub.fetch("https://internal/get-docs-key", { method: "POST" });
-  if (res.status === 401) {
-    throw new HelpScoutApiError(
-      "REAUTH_REQUIRED",
-      "Help Scout Docs API key required. Visit /docs-api-key/enter to connect one.",
-      401,
-    );
-  }
-  if (!res.ok) {
-    throw new HelpScoutApiError(
-      "UPSTREAM_ERROR",
-      `Failed to load Help Scout Docs API key (${res.status})`,
-      res.status,
-    );
-  }
-  const json = (await res.json()) as { apiKey: string };
-  return json.apiKey;
 }
 
 async function transformUploadError(res: Response): Promise<HelpScoutApiError> {
