@@ -59,9 +59,19 @@ export async function mintUploadToken(
 }
 
 /**
- * Read and burn an upload token. Deletion happens before the caller does any
- * work, so a replayed token can't trigger a second upload even if the first
- * one is still in flight.
+ * Read and burn an upload token.
+ *
+ * Best-effort single-use, not a strict guarantee: this is a KV get-then-delete
+ * with no compare-and-swap, and KV reads are colo-cached (default ~60s) with
+ * eventually-consistent invalidation across colos. Two concurrent POSTs with
+ * the same token, or a replay landing on a colo shortly after the first use,
+ * can both read the record before the delete is visible there, letting both
+ * uploads through. The blast radius is bounded and non-escalating either way:
+ * the token stays bound to one article and one user's key (set at mint time),
+ * so the worst case is an extra asset on an article, uploaded by someone who
+ * already held a valid token for it. A strict single-use guarantee would
+ * require doing the burn in the user's Durable Object (strongly consistent)
+ * instead of KV — out of scope here.
  */
 export async function consumeUploadToken(
   env: Env,
@@ -114,9 +124,52 @@ export interface UploadedAsset {
   height?: number;
 }
 
+/**
+ * Canonical extension for each type `sniffImageMimeType` can return. Used by
+ * `sanitizeUploadFileName` to make the stored name agree with the sniffed
+ * bytes rather than whatever extension the caller supplied.
+ */
+const MIME_EXTENSIONS: Record<string, string> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+};
+
+const MAX_FILE_NAME_LENGTH = 100;
+const DEFAULT_FILE_NAME = "image";
+
+/**
+ * Turn a caller-supplied (and therefore untrusted) file name into a safe one
+ * that matches the sniffed image type.
+ *
+ * `fileName` can come straight from an MCP tool argument (prompt-injectable)
+ * or a local uploader's file path, and had no charset/length/extension
+ * constraint. This: (1) drops any directory components, so a path-traversal
+ * attempt like `../../evil.png` can't survive; (2) strips whatever extension
+ * was supplied and replaces it with the canonical one for `sniffed`, so
+ * `logo.svg` carrying real PNG bytes is stored as `logo.png` rather than
+ * under an extension that could make some other system serve it as
+ * HTML/SVG; (3) collapses anything outside a conservative safe set; and
+ * (4) caps the length. Falls back to a generic name if nothing usable
+ * remains.
+ */
+export function sanitizeUploadFileName(name: string | undefined, mimeType: string): string {
+  const extension = MIME_EXTENSIONS[mimeType] ?? "";
+  const base = (name ?? "").split(/[/\\]/).pop() ?? "";
+  const withoutExtension = base.replace(/\.[^./\\]*$/, "");
+  const safe = withoutExtension.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, MAX_FILE_NAME_LENGTH);
+  return `${safe || DEFAULT_FILE_NAME}${extension}`;
+}
+
 async function transformUploadError(res: Response): Promise<HelpScoutApiError> {
-  const bodyText = await res.text().catch(() => "");
-  const message = bodyText || res.statusText || `HTTP ${res.status}`;
+  // Deliberately not the response body: Help Scout's error bodies/WAF pages
+  // can echo request details, and uploadArticleImage below puts the Docs API
+  // key in the very form body a 4xx/5xx here is erroring on. This message
+  // has no client-facing consumer (auth-handler.ts's route returns a fixed
+  // string instead) — its only reader is the `logger.warn` call there, so it
+  // must not carry anything Help Scout echoed back.
+  const message = `Help Scout rejected the asset upload with HTTP ${res.status}.`;
   if (res.status === 401) {
     return new HelpScoutApiError(
       "REAUTH_REQUIRED",
@@ -154,8 +207,13 @@ export async function uploadArticleImage(
   form.set("key", apiKey);
   form.set("articleId", record.articleId);
   form.set("assetType", "image");
-  form.set("fileName", record.fileName ?? file.name);
-  form.set("file", file, record.fileName ?? file.name);
+  // `file.name` is authoritative here, not `record.fileName`: the caller
+  // (the /docs/assets/upload route) has already resolved the fileName
+  // precedence and run it through sanitizeUploadFileName, rebuilding `file`
+  // with that sanitized name. Re-deferring to the raw `record.fileName` here
+  // would undo that sanitization.
+  form.set("fileName", file.name);
+  form.set("file", file, file.name);
 
   const res = await fetch(`${HELPSCOUT_DOCS_API_BASE}/assets/article`, {
     method: "POST",

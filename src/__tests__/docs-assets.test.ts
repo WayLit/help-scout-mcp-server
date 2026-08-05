@@ -4,6 +4,7 @@ import {
   UPLOAD_TOKEN_TTL_SECONDS,
   consumeUploadToken,
   mintUploadToken,
+  sanitizeUploadFileName,
   sniffImageMimeType,
   uploadArticleImage,
 } from "../docs-assets";
@@ -141,6 +142,40 @@ describe("sniffImageMimeType", () => {
   });
 });
 
+describe("sanitizeUploadFileName", () => {
+  it("replaces a mismatched extension with the canonical one for the sniffed type", () => {
+    expect(sanitizeUploadFileName("logo.svg", "image/png")).toBe("logo.png");
+  });
+
+  it("appends the canonical extension when the name has none", () => {
+    expect(sanitizeUploadFileName("logo", "image/jpeg")).toBe("logo.jpg");
+  });
+
+  it("strips directory components so a path-traversal name can't survive", () => {
+    expect(sanitizeUploadFileName("../../evil.png", "image/png")).toBe("evil.png");
+    expect(sanitizeUploadFileName("..\\..\\evil.png", "image/webp")).toBe("evil.webp");
+  });
+
+  it("falls back to a default name when nothing usable remains", () => {
+    expect(sanitizeUploadFileName(".png", "image/gif")).toBe("image.gif");
+    expect(sanitizeUploadFileName(undefined, "image/png")).toBe("image.png");
+  });
+
+  it("caps an over-long name to a reasonable length", () => {
+    const longName = `${"a".repeat(300)}.png`;
+    const result = sanitizeUploadFileName(longName, "image/png");
+    expect(result.length).toBeLessThanOrEqual(104); // 100-char base cap + ".png"
+    expect(result.endsWith(".png")).toBe(true);
+    expect(result.startsWith("aaa")).toBe(true);
+  });
+
+  it("collapses characters outside the safe set instead of passing them through", () => {
+    expect(sanitizeUploadFileName("my file (final)!.png", "image/png")).toBe(
+      "my_file__final__.png",
+    );
+  });
+});
+
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
 function pngFile(name = "shot.png"): File {
@@ -211,21 +246,30 @@ describe("uploadArticleImage", () => {
     }
   });
 
-  it("prefers the fileName bound in the token record over the uploaded file's name", async () => {
+  it("uses the passed-in File's own name, not record.fileName, for both form fields", async () => {
+    // Filename precedence and sanitization both happen upstream, in the
+    // /docs/assets/upload route (see auth-handler.ts), before it builds the
+    // File that's passed in here. By the time uploadArticleImage runs, the
+    // File's name is already the resolved, sanitized one — deferring to
+    // record.fileName again here would undo that sanitization.
     const { env } = uploadEnv(Response.json({ apiKey: "hs-key" }));
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
         Response.json(
-          { filelink: "https://cdn.example/x.png", filename: "bound.png" },
+          { filelink: "https://cdn.example/x.png", filename: "resolved.png" },
           { status: 201 },
         ),
       );
 
     try {
-      await uploadArticleImage(env, { ...RECORD, fileName: "bound.png" }, pngFile("ignored.png"));
+      await uploadArticleImage(
+        env,
+        { ...RECORD, fileName: "unsanitized-record-name.png" },
+        pngFile("resolved.png"),
+      );
       const form = (fetchSpy.mock.calls[0] as [string, RequestInit])[1].body as FormData;
-      expect(form.get("fileName")).toBe("bound.png");
+      expect(form.get("fileName")).toBe("resolved.png");
     } finally {
       fetchSpy.mockRestore();
     }
@@ -308,6 +352,33 @@ describe("uploadArticleImage", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+
+  it("does not put the upstream response body into the thrown error's message for a non-401 status", async () => {
+    // transformUploadError's message is logged verbatim by auth-handler.ts's
+    // route (never returned to a client). uploadArticleImage puts the raw
+    // Docs API key in the multipart body it just sent, so if Help Scout's
+    // error response ever echoes submitted fields, that body text must not
+    // land in the message that gets logged.
+    const { env } = uploadEnv(Response.json({ apiKey: "hs-key" }));
+    const secretBody = "validation failed for key=hs-key&articleId=42";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(secretBody, { status: 403 }));
+
+    let thrown: unknown;
+    try {
+      await uploadArticleImage(env, RECORD, pngFile());
+    } catch (err) {
+      thrown = err;
+    } finally {
+      fetchSpy.mockRestore();
+    }
+
+    expect(thrown).toBeInstanceOf(HelpScoutApiError);
+    const message = (thrown as HelpScoutApiError).message;
+    expect(message).not.toContain(secretBody);
+    expect(message).not.toContain("hs-key");
   });
 
   it("maps Help Scout 5xx to UPSTREAM_ERROR", async () => {

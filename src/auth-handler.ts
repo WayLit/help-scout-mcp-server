@@ -22,6 +22,7 @@ import { recordToolCall } from "./audit";
 import {
   MAX_UPLOAD_BYTES,
   consumeUploadToken,
+  sanitizeUploadFileName,
   sniffImageMimeType,
   uploadArticleImage,
 } from "./docs-assets";
@@ -603,7 +604,10 @@ app.post("/docs/assets/upload", async (c) => {
   // Read the bytes once, sniff them, then forward a rebuilt File that carries
   // the sniffed (trustworthy) type instead of the caller-declared one, so a
   // mislabeled-but-honest upload doesn't propagate its wrong declared type
-  // upstream either.
+  // upstream either. The name gets the same treatment: sanitizeUploadFileName
+  // strips path components and forces the extension to match the sniffed
+  // type, so an attacker-chosen name can't smuggle a mismatched extension
+  // through onto the stored asset.
   const bytes = await file.arrayBuffer();
   const sniffed = sniffImageMimeType(new Uint8Array(bytes));
   if (!sniffed) {
@@ -629,7 +633,8 @@ app.post("/docs/assets/upload", async (c) => {
       415,
     );
   }
-  const safeFile = new File([bytes], record.fileName ?? file.name, { type: sniffed });
+  const safeName = sanitizeUploadFileName(record.fileName ?? file.name, sniffed);
+  const safeFile = new File([bytes], safeName, { type: sniffed });
 
   try {
     const asset = await uploadArticleImage(c.env, record, safeFile);

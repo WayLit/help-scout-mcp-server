@@ -19,7 +19,7 @@ import { instrumentServerForAudit } from "./audit";
 import { registerDocsTools } from "./docs-tools";
 import { HelpScoutAPI } from "./helpscout-api";
 import { HelpScoutDocsAPI } from "./helpscout-docs-api";
-import { buildInstructions } from "./instructions";
+import { buildDocsInstructions, buildInstructions } from "./instructions";
 import { logger } from "./logger";
 import { registerPrompts } from "./prompts";
 import { configureRedaction } from "./redaction";
@@ -327,18 +327,7 @@ export class HelpScoutDocsMCP extends McpAgent<Env, Record<string, never>, Props
     });
 
     const connected = await api.hasApiKey();
-    this.setInstructions(
-      connected
-        ? "Help Scout Docs MCP: read and write access to your Docs knowledge base " +
-            "(collections and articles). Use searchArticles to find stale content by " +
-            "keyword, getArticle to read the full body, and updateArticle to fix it. " +
-            "createArticle defaults to status=notpublished so drafts can be reviewed " +
-            "before publishing. To add images, call createArticleImageUpload, have the " +
-            "local uploader post the file, then insert every returned filelink as an " +
-            "<img> tag in a single updateArticle call."
-        : "No Help Scout Docs API key on file yet — visit /docs-api-key/enter to connect one " +
-            "before calling any tool here.",
-    );
+    this.setInstructions(buildDocsInstructions(connected));
     logger.info("HelpScoutDocsMCP initialized", { email, connected });
   }
 
