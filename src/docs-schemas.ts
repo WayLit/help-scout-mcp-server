@@ -78,3 +78,11 @@ export const UpdateArticleShape = {
 export const DeleteArticleShape = {
   articleId: z.string(),
 };
+
+export const CreateArticleImageUploadShape = {
+  articleId: z.string().describe("The article the image will be attached to. Must already exist."),
+  fileName: z
+    .string()
+    .optional()
+    .describe("Optional name to store the image under. Defaults to the uploaded file's name."),
+};

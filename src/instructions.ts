@@ -56,3 +56,25 @@ ${inboxList}
 - Use getServerTime for date-relative queries
 - PII redaction is enabled by default (set REDACT_PII=false to disable)`;
 }
+
+/**
+ * Build the MCP `instructions` string for the Docs connector (`/docs/mcp`),
+ * distinct from `buildInstructions` above (which is for the mailbox
+ * connector at `/mcp`). Extracted for the same reason: so unit tests can
+ * assert its content — in particular the one-`updateArticle`-per-batch rule,
+ * which is deliberately stated in three places in this codebase (here, in
+ * the `createArticleImageUpload` tool description, and in that tool's
+ * `usage` field) and would otherwise be free to drift unnoticed here.
+ */
+export function buildDocsInstructions(connected: boolean): string {
+  return connected
+    ? "Help Scout Docs MCP: read and write access to your Docs knowledge base " +
+        "(collections and articles). Use searchArticles to find stale content by " +
+        "keyword, getArticle to read the full body, and updateArticle to fix it. " +
+        "createArticle defaults to status=notpublished so drafts can be reviewed " +
+        "before publishing. To add images, call createArticleImageUpload, have the " +
+        "local uploader post the file, then insert every returned filelink as an " +
+        "<img> tag in a single updateArticle call."
+    : "No Help Scout Docs API key on file yet — visit /docs-api-key/enter to connect one " +
+        "before calling any tool here.";
+}

@@ -16,19 +16,27 @@
 import { Hono } from "hono";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 
+import { HELPSCOUT_DOCS_API_BASE } from "./helpscout-docs-api";
 import { AccessAuthError, verifyAccessJwt } from "./access-jwt";
+import { recordToolCall } from "./audit";
+import {
+  MAX_MULTIPART_OVERHEAD_BYTES,
+  MAX_UPLOAD_BYTES,
+  UploadTooLargeError,
+  consumeUploadToken,
+  parseBoundedFormData,
+  sanitizeUploadFileName,
+  sniffImageMimeType,
+  uploadArticleImage,
+} from "./docs-assets";
+import { isHelpScoutApiError } from "./helpscout-api";
 import { logger, newRequestId } from "./logger";
 import type { Env, HelpScoutTokenRecord, Props } from "./types";
-import {
-  createOAuthState,
-  deleteOAuthState,
-  readOAuthState,
-} from "./workers-oauth-utils";
+import { createOAuthState, deleteOAuthState, readOAuthState } from "./workers-oauth-utils";
 
 const HELPSCOUT_AUTHORIZE_URL =
   "https://secure.helpscout.net/authentication/authorizeClientApplication";
 const HELPSCOUT_TOKEN_URL = "https://api.helpscout.net/v2/oauth2/token";
-const HELPSCOUT_DOCS_API_BASE = "https://docsapi.helpscout.net/v1";
 
 type Bindings = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
@@ -329,7 +337,10 @@ app.get("/authorize", async (c) => {
 
   // If the user already has valid HS tokens, skip the HS consent leg.
   if (await userHasValidTokens(c.env, identity.email)) {
-    logger.info("authorize: existing HS tokens, completing auth", { requestId, email: identity.email });
+    logger.info("authorize: existing HS tokens, completing auth", {
+      requestId,
+      email: identity.email,
+    });
     return completeAuth(c.env, oauthReqInfo, {
       email: identity.email,
       name: identity.name,
@@ -490,6 +501,215 @@ app.post("/docs-api-key/submit", async (c) => {
     email: identity.email,
     name: identity.name,
   });
+});
+
+/**
+ * Upload an inline image into a Docs article.
+ *
+ * Deliberately outside Cloudflare Access and outside the OAuth-protected MCP
+ * handlers: the single-use token minted by the `createArticleImageUpload` tool
+ * is the only credential, so a headless local uploader needs nothing
+ * configured. The token carries the identity and the target article, both bound
+ * server-side at mint time — see docs-assets.ts.
+ */
+app.post("/docs/assets/upload", async (c) => {
+  logger.setLevel(c.env.LOG_LEVEL);
+  const requestId = newRequestId();
+  const started = Date.now();
+
+  const token = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  const record = token ? await consumeUploadToken(c.env, token) : null;
+  if (!record) {
+    logger.warn("docs upload: token rejected", { requestId });
+    return c.json(
+      {
+        error: "INVALID_UPLOAD_TOKEN",
+        message: "Upload token is unknown, already used, or expired. Mint a new one.",
+        requestId,
+      },
+      401,
+    );
+  }
+
+  // Same allowance for the two size screens below: Content-Length (and the
+  // metered stream) cover the whole multipart body, so a legal file at the
+  // limit measures more than MAX_UPLOAD_BYTES and must survive both.
+  const maxBodyBytes = MAX_UPLOAD_BYTES + MAX_MULTIPART_OVERHEAD_BYTES;
+
+  // A cheap first screen: a truthfully-declared oversized body is rejected
+  // without reading a byte. An absent or lying header just falls through to
+  // parseBoundedFormData, which meters the stream instead. `file.size` below
+  // is still what enforces the actual per-image limit.
+  const declaredLength = Number(c.req.header("Content-Length") ?? "0");
+  if (declaredLength > maxBodyBytes) {
+    logger.warn("docs upload: declared Content-Length too large", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+      declaredLength,
+    });
+    return c.json(
+      {
+        error: "FILE_TOO_LARGE",
+        message: `Image exceeds the ${MAX_UPLOAD_BYTES}-byte limit.`,
+        requestId,
+      },
+      413,
+    );
+  }
+
+  let file: File;
+  try {
+    const form = await parseBoundedFormData(c.req.raw, maxBodyBytes);
+    const candidate = form.get("file");
+    if (!(candidate instanceof File)) {
+      logger.warn("docs upload: missing file field", {
+        requestId,
+        email: record.email,
+        articleId: record.articleId,
+      });
+      return c.json(
+        { error: "MISSING_FILE", message: "Expected a `file` field holding the image.", requestId },
+        400,
+      );
+    }
+    file = candidate;
+  } catch (err) {
+    if (err instanceof UploadTooLargeError) {
+      logger.warn("docs upload: body exceeded the cap mid-stream", {
+        requestId,
+        email: record.email,
+        articleId: record.articleId,
+        maxBodyBytes,
+      });
+      return c.json(
+        {
+          error: "FILE_TOO_LARGE",
+          message: `Image exceeds the ${MAX_UPLOAD_BYTES}-byte limit.`,
+          requestId,
+        },
+        413,
+      );
+    }
+    logger.warn("docs upload: unparseable body", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+    });
+    return c.json(
+      {
+        error: "INVALID_INPUT",
+        message: "Body must be multipart/form-data with a `file` field.",
+        requestId,
+      },
+      400,
+    );
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    logger.warn("docs upload: file too large", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+      bytes: file.size,
+    });
+    return c.json(
+      {
+        error: "FILE_TOO_LARGE",
+        message: `Image exceeds the ${MAX_UPLOAD_BYTES}-byte limit.`,
+        requestId,
+      },
+      413,
+    );
+  }
+
+  // Trust the bytes, not the declared Content-Type. SVG is rejected: Help
+  // Scout serves assets from its own domain, so a scripted SVG is stored XSS.
+  // Read the bytes once, sniff them, then forward a rebuilt File that carries
+  // the sniffed (trustworthy) type instead of the caller-declared one, so a
+  // mislabeled-but-honest upload doesn't propagate its wrong declared type
+  // upstream either. The name gets the same treatment: sanitizeUploadFileName
+  // strips path components and forces the extension to match the sniffed
+  // type, so an attacker-chosen name can't smuggle a mismatched extension
+  // through onto the stored asset.
+  const bytes = await file.arrayBuffer();
+  const sniffed = sniffImageMimeType(new Uint8Array(bytes));
+  if (!sniffed) {
+    logger.warn("docs upload: unsupported image type", {
+      requestId,
+      email: record.email,
+      declaredType: file.type,
+    });
+    await recordToolCall(c.env, {
+      email: record.email,
+      tool: "uploadArticleImage",
+      args: { articleId: record.articleId, fileName: record.fileName, bytes: file.size },
+      durationMs: Date.now() - started,
+      status: "error",
+      errorCode: "UNSUPPORTED_IMAGE_TYPE",
+    });
+    return c.json(
+      {
+        error: "UNSUPPORTED_IMAGE_TYPE",
+        message: "Image must be PNG, JPEG, GIF, or WebP.",
+        requestId,
+      },
+      415,
+    );
+  }
+  const safeName = sanitizeUploadFileName(record.fileName ?? file.name, sniffed);
+  const safeFile = new File([bytes], safeName, { type: sniffed });
+
+  try {
+    const asset = await uploadArticleImage(c.env, record, safeFile);
+    logger.info("docs upload: asset stored", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+    });
+    await recordToolCall(c.env, {
+      email: record.email,
+      tool: "uploadArticleImage",
+      args: { articleId: record.articleId, fileName: record.fileName, bytes: file.size },
+      durationMs: Date.now() - started,
+      status: "ok",
+    });
+    return c.json(asset, 201);
+  } catch (err) {
+    const code = isHelpScoutApiError(err) ? err.code : "UNEXPECTED_ERROR";
+    const status = isHelpScoutApiError(err) && err.status ? err.status : 500;
+    // Never relay upstream response bodies or raw internal error text to the
+    // token holder. Help Scout's error bodies/WAF pages can echo request
+    // details — and docs-assets.ts puts the Docs API key in the very form
+    // body a 4xx/5xx from that endpoint is erroring on — while a leaked
+    // token's holder is not necessarily the key's owner. The error code and
+    // requestId already give the caller everything actionable; full detail
+    // goes to the log line below instead of the response.
+    const detail = err instanceof Error ? err.message : String(err);
+    logger.warn("docs upload: failed", {
+      requestId,
+      email: record.email,
+      articleId: record.articleId,
+      errorCode: code,
+      detail,
+    });
+    await recordToolCall(c.env, {
+      email: record.email,
+      tool: "uploadArticleImage",
+      args: { articleId: record.articleId, fileName: record.fileName, bytes: file.size },
+      durationMs: Date.now() - started,
+      status: "error",
+      errorCode: code,
+    });
+    return c.json(
+      {
+        error: code,
+        message: isHelpScoutApiError(err) ? "Help Scout rejected the upload." : "Upload failed.",
+        requestId,
+      },
+      status as 400,
+    );
+  }
 });
 
 export { app as AuthHandler };

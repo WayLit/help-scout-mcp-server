@@ -13,7 +13,34 @@ import type { DurableObjectStorage } from "@cloudflare/workers-types";
 import { HelpScoutApiError } from "./helpscout-api";
 import type { Env } from "./types";
 
-const HELPSCOUT_DOCS_API_BASE = "https://docsapi.helpscout.net/v1";
+export const HELPSCOUT_DOCS_API_BASE = "https://docsapi.helpscout.net/v1";
+
+/**
+ * Read the user's Docs API key from their mailbox DO.
+ * Used by both HelpScoutDocsAPI and the standalone uploadArticleImage function.
+ */
+export async function fetchDocsApiKey(env: Env, email: string): Promise<string> {
+  const id = env.MCP_OBJECT.idFromName(email);
+  const stub = env.MCP_OBJECT.get(id);
+  const res = await stub.fetch("https://internal/get-docs-key", { method: "POST" });
+  if (res.status === 401) {
+    throw new HelpScoutApiError(
+      "REAUTH_REQUIRED",
+      "Help Scout Docs API key required. Visit /docs-api-key/enter to connect one.",
+      401,
+    );
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new HelpScoutApiError(
+      "UPSTREAM_ERROR",
+      `Failed to load Help Scout Docs API key (${res.status}): ${text}`,
+      res.status,
+    );
+  }
+  const json = (await res.json()) as { apiKey: string };
+  return json.apiKey;
+}
 
 export class HelpScoutDocsAPI {
   constructor(
@@ -37,25 +64,7 @@ export class HelpScoutDocsAPI {
   }
 
   private async fetchApiKey(): Promise<string> {
-    const stub = this.getUserDoStub();
-    const res = await stub.fetch("https://internal/get-docs-key", { method: "POST" });
-    if (res.status === 401) {
-      throw new HelpScoutApiError(
-        "REAUTH_REQUIRED",
-        "Help Scout Docs API key required. Visit /docs-api-key/enter to connect one.",
-        401,
-      );
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new HelpScoutApiError(
-        "UPSTREAM_ERROR",
-        `Failed to load Help Scout Docs API key (${res.status}): ${text}`,
-        res.status,
-      );
-    }
-    const json = (await res.json()) as { apiKey: string };
-    return json.apiKey;
+    return fetchDocsApiKey(this.env, this.userEmail);
   }
 
   // ── Request pipeline ───────────────────────────────────────────────────

@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { buildInstructions } from "../instructions";
+import { buildDocsInstructions, buildInstructions } from "../instructions";
 
 describe("buildInstructions", () => {
   it("renders the empty-state hint when no inboxes are passed", () => {
     const out = buildInstructions([]);
     expect(out).toContain("## Available Inboxes (0 total)");
-    expect(out).toContain("(No inboxes discovered yet — call searchInboxes once tokens are available)");
+    expect(out).toContain(
+      "(No inboxes discovered yet — call searchInboxes once tokens are available)",
+    );
   });
 
-  it("lists each inbox as a `\"name\" (ID: id)` bullet", () => {
+  it('lists each inbox as a `"name" (ID: id)` bullet', () => {
     const out = buildInstructions([
       { id: 1, name: "Support" },
       { id: 42, name: "Billing" },
@@ -41,5 +43,21 @@ describe("buildInstructions", () => {
     expect(out).toContain("draftReply");
     expect(out).toContain("createDraftConversation");
     expect(out).toMatch(/draftReply and createDraftConversation are write operations/i);
+  });
+});
+
+describe("buildDocsInstructions", () => {
+  it("when connected, mentions createArticleImageUpload and the one-updateArticle-per-batch rule", () => {
+    const out = buildDocsInstructions(true);
+    expect(out).toContain("createArticleImageUpload");
+    expect(out).toContain("a single updateArticle call");
+    expect(out).toContain("searchArticles");
+    expect(out).toContain("updateArticle");
+  });
+
+  it("when not connected, prompts for a Docs API key and mentions no tools", () => {
+    const out = buildDocsInstructions(false);
+    expect(out).toContain("/docs-api-key/enter");
+    expect(out).not.toContain("createArticleImageUpload");
   });
 });

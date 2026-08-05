@@ -19,7 +19,7 @@ import { instrumentServerForAudit } from "./audit";
 import { registerDocsTools } from "./docs-tools";
 import { HelpScoutAPI } from "./helpscout-api";
 import { HelpScoutDocsAPI } from "./helpscout-docs-api";
-import { buildInstructions } from "./instructions";
+import { buildDocsInstructions, buildInstructions } from "./instructions";
 import { logger } from "./logger";
 import { registerPrompts } from "./prompts";
 import { configureRedaction } from "./redaction";
@@ -306,6 +306,13 @@ export class HelpScoutDocsMCP extends McpAgent<Env, Record<string, never>, Props
     version: "1.0.0",
   });
 
+  /**
+   * Public origin of the most recent request, used to build absolute upload
+   * URLs. `fetch()` always runs before any tool call, so this is populated by
+   * the time a tool needs it.
+   */
+  private publicOrigin: string | undefined;
+
   async init(): Promise<void> {
     logger.setLevel(this.env.LOG_LEVEL);
     const email = this.props?.email;
@@ -314,19 +321,13 @@ export class HelpScoutDocsMCP extends McpAgent<Env, Record<string, never>, Props
     }
     const api = new HelpScoutDocsAPI(this.env, this.ctx.storage, email);
     instrumentServerForAudit(this.server, this.env, email);
-    registerDocsTools(this.server, api);
+    registerDocsTools(this.server, api, {
+      env: this.env,
+      getPublicOrigin: () => this.publicOrigin,
+    });
 
     const connected = await api.hasApiKey();
-    this.setInstructions(
-      connected
-        ? "Help Scout Docs MCP: read and write access to your Docs knowledge base " +
-            "(collections and articles). Use searchArticles to find stale content by " +
-            "keyword, getArticle to read the full body, and updateArticle to fix it. " +
-            "createArticle defaults to status=notpublished so drafts can be reviewed " +
-            "before publishing."
-        : "No Help Scout Docs API key on file yet — visit /docs-api-key/enter to connect one " +
-            "before calling any tool here.",
-    );
+    this.setInstructions(buildDocsInstructions(connected));
     logger.info("HelpScoutDocsMCP initialized", { email, connected });
   }
 
@@ -337,6 +338,7 @@ export class HelpScoutDocsMCP extends McpAgent<Env, Record<string, never>, Props
 
   /** Same cross-identity replay guard as HelpScoutMCP.fetch — see there for the full rationale. */
   async fetch(request: Request): Promise<Response> {
+    this.publicOrigin = new URL(request.url).origin;
     const verifiedEmail = request.headers.get(VERIFIED_EMAIL_HEADER);
     const boundEmail = this.props?.email;
     if (verifiedEmail && boundEmail && verifiedEmail !== boundEmail) {
