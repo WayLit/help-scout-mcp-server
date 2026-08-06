@@ -3,10 +3,12 @@
  *
  * Ported from src/tools/index.ts in the stdio server. Each tool is registered
  * on the given McpServer and uses the per-user HelpScoutAPI instance for
- * requests. PII redaction and `HELPSCOUT_DEFAULT_INBOX_ID` scoping are
- * intentionally omitted — the Worker deployment is per-user, so data never
- * crosses users, and users can pass inboxId explicitly when they want to
- * scope.
+ * requests. Customer-facing content is redacted on the way out — see
+ * ./redaction.
+ *
+ * `HELPSCOUT_DEFAULT_INBOX_ID` scoping is intentionally omitted: the Worker
+ * deployment is per-user, so data never crosses users, and callers can pass
+ * inboxId explicitly when they want to scope.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
