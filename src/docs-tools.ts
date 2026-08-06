@@ -276,7 +276,7 @@ export function registerDocsTools(
   // ── createArticle ────────────────────────────────────────────────────
   server.tool(
     "createArticle",
-    "Create a new Docs article in a collection. Defaults to unpublished (status=notpublished) so you can review before it goes live.",
+    "Create a new Docs article in a collection. Defaults to unpublished (status=notpublished) so you can review before it goes live. Pass related to link sibling articles by their internal id.",
     CreateArticleShape,
     async (input): Promise<CallToolResult> => {
       try {
@@ -287,6 +287,7 @@ export function registerDocsTools(
           status: input.status,
           categories: input.categories,
           keywords: input.keywords,
+          related: input.related,
         });
         return textResult({ success: true, ...(result as object) });
       } catch (err) {
@@ -298,7 +299,7 @@ export function registerDocsTools(
   // ── updateArticle ────────────────────────────────────────────────────
   server.tool(
     "updateArticle",
-    'Update a Docs article. Only provided fields change — omit fields to leave them as-is. Set status to "published" to publish, "notpublished" to unpublish.',
+    'Update a Docs article. Only provided fields change — omit fields to leave them as-is. Set status to "published" to publish, "notpublished" to unpublish. The list fields (categories, keywords, related) each replace their whole list rather than appending to it; pass null to clear one.',
     UpdateArticleShape,
     async (input): Promise<CallToolResult> => {
       try {
