@@ -18,6 +18,28 @@ pnpm type-check  # tsc --noEmit
 pnpm test        # vitest
 ```
 
+## Compared to the official Help Scout MCP
+
+Help Scout runs its own hosted MCP server at `https://mcp.helpscout.net/mcp` ([their docs](https://docs.helpscout.com/article/1779-connect-your-ai-agent-with-help-scout-to-search-conversations-and-pull-reports)). If all you need is read access, use theirs — it's hosted, there's nothing to deploy, and it exposes reporting and admin surfaces this worker doesn't have.
+
+This worker exists for what the official server doesn't do yet: **write**, and do it behind your own controls.
+
+| | Official | This worker |
+|---|---|---|
+| Conversations, customers, organizations | read | read, plus composite search/context tools |
+| Reports (company, conversation, productivity, happiness) | ✅ Plus/Pro | ❌ |
+| Users, teams, workflows, saved replies | ✅ | ❌ (inboxes only) |
+| Conversation writes | ❌ on their roadmap | ✅ draft replies, status, assign, move, new draft |
+| Docs (knowledge base) | search + read | full CRUD on collections and articles, plus image upload |
+| PII redaction | — | ✅ on by default, fails closed |
+| SSO perimeter | Help Scout login | ✅ Cloudflare Access in front of the OAuth flow |
+| Audit log | — | ✅ optional, append-only D1 |
+| Ops burden | none, hosted | you deploy and run the Worker |
+
+The two aren't mutually exclusive — they authenticate independently, so you can connect both and let the official server handle reporting while this one handles drafting and Docs edits.
+
+> Capabilities compared as of August 2026. Help Scout lists write support as planned, so check their docs before assuming this table still holds.
+
 ## One-time setup
 
 ### 1. Create the KV namespace
@@ -197,6 +219,14 @@ wrangler d1 execute helpscout-mcp-audit --command "
 
 If the `AUDIT_DB` binding is absent, audit logging is a silent no-op. `args_hash` is a SHA-256 of the JSON-stringified args, so the log is forensically useful without storing user content.
 
+## PII redaction
+
+**On by default.** Conversation bodies, subjects, customer records, and contact details are redacted via [OpenRedaction](https://github.com/sam247/openredaction) (GDPR preset) before anything reaches the model. Set `REDACT_PII=false` to disable.
+
+Redaction is field-level and content-aware rather than swapping whole bodies for a constant, so message structure survives and the model can still reason about what a ticket is about. Placeholders are deterministic — the same email always maps to the same token, so the model can tell that two results involve the same person. Names are deliberately left in place: redacting them cost a lot of triage value (who filed it, who's assigned) without much privacy gain, since a name alone isn't very identifying once the email, phone, and address are gone.
+
+It fails closed. If the detector throws, the tool call errors rather than returning unredacted text.
+
 ## Custom domain
 
 The committed `wrangler.jsonc` has no `routes` block, so `wrangler deploy` puts the worker on `*.workers.dev`. To deploy under your own hostname, use an override config file (gitignored — your hostname stays out of the repo):
@@ -222,5 +252,3 @@ The worker intentionally omits some pieces that the old stdio server had:
 
 - **Shared OAuth Client Credentials** — every user authenticates Help Scout themselves; no shared app credential.
 - **No `HELPSCOUT_DEFAULT_INBOX_ID`** — per-user deployment, scope by passing `inboxId` per call.
-
-PII redaction (via [OpenRedaction](https://github.com/sam247/openredaction)) is added in Phase 6 of the rollout plan.
