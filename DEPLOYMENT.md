@@ -33,22 +33,28 @@ Paste the two returned IDs into `wrangler.jsonc` (`id` and `preview_id`), replac
 
 ## 3. Set up Cloudflare Access (identity)
 
-Cloudflare Access provides identity. Scope it to the worker's **browser-interactive paths only**: `/authorize` (OAuth entry for both `/mcp` and `/docs/mcp`), `/callback/helpscout` (the Help Scout OAuth redirect — the worker re-verifies the Access JWT here, binding the callback to the identity that started the flow, on top of the one-time OAuth state token), and `/docs-api-key/*` (the Docs API key entry/rotation form — see the [Docs MCP](./README.md#docs-mcp) section in the README). Every other endpoint is deliberately left un-fronted: `/mcp`, `/docs/mcp`, and `/token` are protected by the OAuth bearer token the worker itself issues *after* a successful `/authorize`, and `/docs/assets/upload` is protected by the single-use upload token minted by the `createArticleImageUpload` tool. Fronting only these paths is what lets MCP clients authenticate with an ordinary browser login instead of a pre-shared service token (see step 8).
+Cloudflare Access provides identity. Scope it to the worker's **browser-interactive paths only**:
 
-> **Do not add `/docs/assets/upload` to the Access application.** It is called by a headless local uploader that has no browser session. Fronting it with Access serves a login page instead of accepting the upload, silently breaking image uploads. Scope the Access app to `/authorize`, `/callback/helpscout`, and `/docs-api-key/*` only.
+- `/authorize` — OAuth entry for both `/mcp` and `/docs/mcp`.
+- `/callback/helpscout` — the Help Scout OAuth redirect. The worker re-verifies the Access JWT here, binding the callback to the identity that started the flow on top of the one-time OAuth state token.
+- `/docs-api-key/*` — the Docs API key entry and rotation form; see the [Docs MCP](./README.md#docs-mcp) section in the README.
+
+Leave every other endpoint un-fronted. The OAuth bearer token the worker issues *after* a successful `/authorize` protects `/mcp`, `/docs/mcp`, and `/token`; the single-use upload token minted by the `createArticleImageUpload` tool protects `/docs/assets/upload`. Fronting only these three paths lets MCP clients authenticate with an ordinary browser login instead of a pre-shared service token (see step 8).
+
+> **Do not add `/docs/assets/upload` to the Access application.** A headless local uploader with no browser session calls it. Access would answer that uploader with a login page instead of accepting the file, silently breaking image uploads. Scope the Access app to `/authorize`, `/callback/helpscout`, and `/docs-api-key/*` only.
 
 1. **Add Google Workspace as an IdP** in Zero Trust → Settings → Authentication → Login methods → Add new → Google Workspace. Follow the connector wizard (one-time admin consent in Workspace).
 2. **Create a Self-hosted Access application** scoped to the authorize + callback + docs-key paths:
    - Application domain / path: your hostname **with the `/authorize` path** — e.g. `helpscout-mcp.example.com/authorize` (or the `*.workers.dev` URL + `/authorize`). Add a second path rule for `/callback/helpscout` and a third for `/docs-api-key/*` in the same app (or separate apps with an identical policy) — the callback rule is required, not just for Docs MCP.
    - Identity providers: Google Workspace.
-   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>`. This is your perimeter — it still gates every login, because identity can only enter through these paths.
+   - Policy: `Allow` if `Emails ending in @<your-workspace-domain>`. This is your perimeter, and it still gates every login, because identity can enter only through these paths.
 3. **Capture two values** for worker secrets:
    - `CF_ACCESS_TEAM_DOMAIN` — your team subdomain (e.g. `acme` for `acme.cloudflareaccess.com`).
    - `CF_ACCESS_AUD` — the Application Audience (AUD) tag from the Access app overview page.
 
-> **No service token required.** Earlier versions fronted the *entire* hostname, which forced headless clients to send `CF-Access-Client-Id` / `CF-Access-Client-Secret` on every `/mcp` call. With Access scoped this way, the interactive browser OAuth flow carries identity and the worker's own bearer token protects the MCP endpoints — so end users connect with no headers (step 8).
+> **No service token required.** Earlier versions fronted the *entire* hostname, which forced headless clients to send `CF-Access-Client-Id` / `CF-Access-Client-Secret` on every `/mcp` call. Scoped this way, the interactive browser OAuth flow carries identity and the worker's own bearer token protects the MCP endpoints, so end users connect with no headers at all (step 8).
 >
-> After deploying (step 6), verify the scoping: `curl -i https://<hostname>/mcp` and `curl -i https://<hostname>/docs/mcp` should each return a **401 bearer challenge from the worker**, not a Cloudflare Access login page. If you get Access login HTML, the app is still fronting the whole host — narrow its path.
+> After deploying (step 6), verify the scoping: `curl -i https://<hostname>/mcp` and `curl -i https://<hostname>/docs/mcp` should each return a **401 bearer challenge from the worker**, not a Cloudflare Access login page. Access login HTML means the app still fronts the whole host — narrow its path.
 
 ## 4. Create the Help Scout OAuth app
 
@@ -73,7 +79,7 @@ wrangler secret put OAUTH_ALLOWED_REDIRECT_HOSTS
 # value: comma-separated host patterns, e.g. "claude.ai,*.claude.ai"
 ```
 
-Loopback (`localhost`, `127.0.0.1`, `[::1]`) is always allowed, so desktop clients work without this.
+Loopback (`localhost`, `127.0.0.1`, `[::1]`) always passes, so desktop clients need none of this.
 
 ## 6. Deploy
 
@@ -97,7 +103,7 @@ cp wrangler.custom.jsonc.example wrangler.custom.jsonc
 wrangler deploy --config wrangler.custom.jsonc
 ```
 
-`--config` replaces (does not merge with) the default `wrangler.jsonc`, so the override file is a complete worker config. Keep it in sync if you later upgrade the base config.
+`--config` replaces the default `wrangler.jsonc` rather than merging with it, so the override file must be a complete worker config. Keep it in sync when you upgrade the base config.
 
 When changing hostname, three things must point at the same place:
 
@@ -121,7 +127,7 @@ pnpm exec wrangler deploy --dry-run
 
 ## 8. Connect an MCP client
 
-Point your MCP client at the deployed `/mcp` URL. No headers, no service token — authentication happens through an interactive browser login on first connect.
+Point your MCP client at the deployed `/mcp` URL. No headers, no service token: the first connect authenticates through an interactive browser login.
 
 **Claude Code:**
 
@@ -140,7 +146,7 @@ The client then exchanges the resulting code at `/token`, stores its own bearer 
 
 > Browser-based clients (claude.ai, etc.) additionally need their redirect host listed in `OAUTH_ALLOWED_REDIRECT_HOSTS` (step 5). Loopback clients like Claude Code work with no extra config.
 
-**Docs MCP (optional, separate connector):** add a second entry pointed at `/docs/mcp`, e.g. `claude mcp add helpscout-docs https://helpscout-mcp.waylit.ai/docs/mcp --transport http`. First connect walks through Cloudflare Access, then — instead of Help Scout OAuth consent — a short form asking for your personal Docs API key (Help Scout → profile → **My API Keys**). See [Docs MCP](./README.md#docs-mcp) in the README for details.
+**Docs MCP (optional, separate connector):** add a second entry pointed at `/docs/mcp`, e.g. `claude mcp add helpscout-docs https://helpscout-mcp.waylit.ai/docs/mcp --transport http`. First connect walks through Cloudflare Access, then serves a short form asking for your personal Docs API key (Help Scout → profile → **My API Keys**) in place of Help Scout OAuth consent. See [Docs MCP](./README.md#docs-mcp) in the README for details.
 
 ## 9. (Optional) Enable the audit log
 
@@ -168,20 +174,20 @@ wrangler d1 execute helpscout-mcp-audit --command "
 "
 ```
 
-If the `AUDIT_DB` binding is absent, audit logging is a silent no-op. `args_hash` is SHA-256 of the JSON-stringified args, so the log is forensically useful without storing user content.
+Without the `AUDIT_DB` binding, audit logging is a silent no-op. `args_hash` is a SHA-256 of the JSON-stringified args, so the log stays forensically useful without storing user content.
 
 ## Common pitfalls
 
 | Symptom | Likely cause |
 |---|---|
-| `401` before the worker is hit | Cloudflare Access policy doesn't include the user. Check Zero Trust → Logs → Access. |
-| `invalid_grant` loops on tool call | User's Help Scout refresh token was revoked (HS app reinstalled, etc.). Worker should detect and force re-consent; if not, delete the user's DO storage entry manually via the dashboard. |
-| Tool calls return `UNAUTHORIZED` | Token storage is missing/corrupt — forces re-auth on next call, which usually self-heals. |
-| `curl /mcp` or `curl /docs/mcp` returns a Cloudflare Access login page (HTML) instead of a 401 bearer challenge | The Access app is fronting the whole hostname. Scope it to `/authorize`, `/callback/helpscout`, and `/docs-api-key/*` only (step 3), so the bearer-protected `/mcp`, `/docs/mcp`, and `/token` endpoints stay reachable. |
-| Browser never prompts for Cloudflare Access during connect | The `/authorize` (or `/callback/helpscout`, or `/docs-api-key/*`) path isn't covered by any Access application — identity isn't being enforced. Confirm the app's domain/path includes it. |
-| `Missing Cf-Access-Jwt-Assertion header` on the Help Scout redirect back to the worker | The Access app's path rules don't cover `/callback/helpscout`. The worker re-verifies the Access JWT on that route (to bind the callback to the identity that started the flow), so it must be fronted the same as `/authorize`. Add the path rule (step 3). |
-| Docs MCP tool calls return `REAUTH_REQUIRED` | No Docs API key on file, or Help Scout revoked/rotated it. Visit `/docs-api-key/enter` to (re)connect one. |
-| Image upload returns a Cloudflare Access login page instead of `201` | The Access app is fronting `/docs/assets/upload`. Narrow its path rules to `/authorize`, `/callback/helpscout`, and `/docs-api-key/*` only (step 3). |
-| Image upload returns `401 INVALID_UPLOAD_TOKEN` | The token was already used — including by a prior attempt that failed after the token was read, since it's burned on read, not on success — or more than 15 minutes elapsed since `createArticleImageUpload`. If the token was only just minted, this can also be a KV read-consistency miss (the token hasn't propagated to this colo yet); retrying is safe in that case. Otherwise mint a fresh one per image. |
-| `wrangler deploy` fails with DNS error | Custom domain's zone is not Cloudflare-managed on this account. Either move DNS or deploy to `*.workers.dev` instead. |
+| `401` before the worker is hit | The Cloudflare Access policy excludes the user. Check Zero Trust → Logs → Access. |
+| `invalid_grant` loops on tool call | Help Scout revoked the user's refresh token (HS app reinstalled, etc.). The worker should detect that and force re-consent; failing that, delete the user's DO storage entry by hand in the dashboard. |
+| Tool calls return `UNAUTHORIZED` | Token storage is missing or corrupt. The client re-authenticates on its next call, which usually self-heals. |
+| `curl /mcp` or `curl /docs/mcp` returns a Cloudflare Access login page (HTML) instead of a 401 bearer challenge | The Access app fronts the whole hostname. Scope it to `/authorize`, `/callback/helpscout`, and `/docs-api-key/*` only (step 3), so the bearer-protected `/mcp`, `/docs/mcp`, and `/token` endpoints stay reachable. |
+| Browser never prompts for Cloudflare Access during connect | No Access application covers `/authorize` (or `/callback/helpscout`, or `/docs-api-key/*`), so nothing enforces identity. Confirm the app's domain/path includes it. |
+| `Missing Cf-Access-Jwt-Assertion header` on the Help Scout redirect back to the worker | The Access app's path rules omit `/callback/helpscout`. The worker re-verifies the Access JWT on that route, binding the callback to the identity that started the flow, so Access must front it the same as `/authorize`. Add the path rule (step 3). |
+| Docs MCP tool calls return `REAUTH_REQUIRED` | No Docs API key on file, or Help Scout revoked or rotated it. Visit `/docs-api-key/enter` to connect a fresh one. |
+| Image upload returns a Cloudflare Access login page instead of `201` | The Access app fronts `/docs/assets/upload`. Narrow its path rules to `/authorize`, `/callback/helpscout`, and `/docs-api-key/*` only (step 3). |
+| Image upload returns `401 INVALID_UPLOAD_TOKEN` | Something already consumed the token — the worker burns it on read rather than on success, so a failed attempt counts — or more than 15 minutes elapsed since `createArticleImageUpload`. A token minted seconds ago can also miss on KV read consistency, before it propagates to this colo; retrying is safe there. Otherwise mint a fresh token per image. |
+| `wrangler deploy` fails with DNS error | The custom domain's zone lives outside this Cloudflare account. Either move DNS or deploy to `*.workers.dev` instead. |
 | `BYPASS_ACCESS=true` is silently ignored in production | Intentional. The runtime refuses it outside `wrangler dev`. |
