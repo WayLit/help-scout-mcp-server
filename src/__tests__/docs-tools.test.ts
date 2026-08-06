@@ -1,9 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
+import { CreateArticleShape, UpdateArticleShape } from "../docs-schemas";
 import { HelpScoutApiError } from "../helpscout-api";
 import { registerDocsTools } from "../docs-tools";
+
+const RELATED_A = "521509f145667acd25394b5b";
+const RELATED_B = "521509f145667acd25394b5d";
+
+/** Whole-list fields on updateArticle: omitted = unchanged, array = replace, null = clear. */
+const LIST_FIELDS = ["categories", "keywords", "related"] as const;
 
 const EXPECTED_TOOL_NAMES = [
   "listCollections",
@@ -134,6 +142,28 @@ describe("createArticle", () => {
     const payload = parseResult(result) as { success: boolean };
     expect(payload.success).toBe(true);
   });
+
+  it("passes related article ids through to the API", async () => {
+    const { api, tools } = setupServer();
+    api.write.mockResolvedValue({ location: "https://docsapi.helpscout.net/v1/articles/a1" });
+
+    await tools.createArticle.handler(
+      {
+        collectionId: "c1",
+        name: "New Article",
+        text: "Body",
+        status: "notpublished",
+        related: [RELATED_A, RELATED_B],
+      },
+      {},
+    );
+
+    expect(api.write).toHaveBeenCalledWith(
+      "POST",
+      "/articles?reload=true",
+      expect.objectContaining({ related: [RELATED_A, RELATED_B] }),
+    );
+  });
 });
 
 describe("updateArticle", () => {
@@ -144,6 +174,87 @@ describe("updateArticle", () => {
     await tools.updateArticle.handler({ articleId: "a1", status: "published" }, {});
 
     expect(api.write).toHaveBeenCalledWith("PUT", "/articles/a1", { status: "published" });
+  });
+
+  it("passes the list fields through as whole-list replacements", async () => {
+    const { api, tools } = setupServer();
+    api.write.mockResolvedValue({});
+
+    await tools.updateArticle.handler(
+      {
+        articleId: "a1",
+        categories: ["5214c83d45667acd25394b54"],
+        keywords: ["refund"],
+        related: [RELATED_A, RELATED_B],
+      },
+      {},
+    );
+
+    expect(api.write).toHaveBeenCalledWith("PUT", "/articles/a1", {
+      categories: ["5214c83d45667acd25394b54"],
+      keywords: ["refund"],
+      related: [RELATED_A, RELATED_B],
+    });
+  });
+
+  it.each(LIST_FIELDS)("forwards a null %s so the API clears the list", async (field) => {
+    const { api, tools } = setupServer();
+    api.write.mockResolvedValue({});
+
+    await tools.updateArticle.handler({ articleId: "a1", [field]: null }, {});
+
+    expect(api.write).toHaveBeenCalledWith("PUT", "/articles/a1", { [field]: null });
+  });
+
+  it.each(LIST_FIELDS)("leaves %s untouched when it is omitted", async (field) => {
+    const { api, tools } = setupServer();
+    api.write.mockResolvedValue({});
+
+    await tools.updateArticle.handler({ articleId: "a1", text: "Body" }, {});
+
+    const body = api.write.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(body).not.toHaveProperty(field);
+  });
+});
+
+describe("article list field schemas", () => {
+  const createSchema = z.object(CreateArticleShape);
+  const updateSchema = z.object(UpdateArticleShape);
+  const article = { collectionId: "c1", name: "A", text: "Body" };
+
+  it("accepts 24-char hex article ids", () => {
+    expect(createSchema.safeParse({ ...article, related: [RELATED_A] }).success).toBe(true);
+    expect(updateSchema.safeParse({ articleId: "a1", related: [RELATED_A] }).success).toBe(true);
+  });
+
+  it("rejects an article number in place of an id", () => {
+    const result = updateSchema.safeParse({ articleId: "a1", related: ["42"] });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toContain("24-character hex");
+  });
+
+  it("rejects ids that are the wrong length or not hex", () => {
+    for (const bad of [
+      "521509f145667acd25394b5",
+      "521509f145667acd25394b5bb",
+      "zzz509f145667acd25394b5b",
+    ]) {
+      expect(updateSchema.safeParse({ articleId: "a1", related: [bad] }).success, bad).toBe(false);
+    }
+  });
+
+  it.each(LIST_FIELDS)("allows null %s on update to clear it, but not on create", (field) => {
+    expect(updateSchema.safeParse({ articleId: "a1", [field]: null }).success).toBe(true);
+    expect(createSchema.safeParse({ ...article, [field]: null }).success).toBe(false);
+  });
+
+  it("leaves category ids and keywords unconstrained in format", () => {
+    const result = updateSchema.safeParse({
+      articleId: "a1",
+      categories: ["c9"],
+      keywords: ["refund", "billing"],
+    });
+    expect(result.success).toBe(true);
   });
 });
 
