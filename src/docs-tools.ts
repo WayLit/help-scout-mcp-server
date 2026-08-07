@@ -276,7 +276,7 @@ export function registerDocsTools(
   // ── createArticle ────────────────────────────────────────────────────
   server.tool(
     "createArticle",
-    "Create a new Docs article in a collection. Defaults to unpublished (status=notpublished) so you can review before it goes live. Pass related to link sibling articles by their internal id.",
+    "Create a new Docs article in a collection. Defaults to unpublished (status=notpublished) so you can review before it goes live. Pass related to link sibling articles by their internal id, and slug to set the article's URL instead of letting Help Scout derive one from the name.",
     CreateArticleShape,
     async (input): Promise<CallToolResult> => {
       try {
@@ -284,6 +284,7 @@ export function registerDocsTools(
           collectionId: input.collectionId,
           name: input.name,
           text: input.text,
+          slug: input.slug,
           status: input.status,
           categories: input.categories,
           keywords: input.keywords,

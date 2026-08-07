@@ -123,7 +123,7 @@ First connection flow:
 
 When Help Scout revokes the key or you rotate it, tool calls start failing with `REAUTH_REQUIRED`. To replace it, visit `https://<YOUR_HOSTNAME>/docs-api-key/enter` directly — the client's OAuth flow stays intact.
 
-Tools are read/write: `listCollections`, `getCollection`, `createCollection`, `updateCollection`, `deleteCollection`, `listArticles`, `searchArticles`, `getArticle`, `createArticle`, `updateArticle`, `deleteArticle`, `createArticleImageUpload`. New articles default to `status: notpublished`, so you can review a draft before it goes live — pass `status: "published"` to publish immediately.
+Tools are read/write: `listCollections`, `getCollection`, `createCollection`, `updateCollection`, `deleteCollection`, `listArticles`, `searchArticles`, `getArticle`, `createArticle`, `updateArticle`, `deleteArticle`, `createArticleImageUpload`. New articles default to `status: notpublished`, so you can review a draft before it goes live — pass `status: "published"` to publish immediately. `createArticle` and `updateArticle` both accept a `slug`, the last segment of the article's public URL; omit it and Help Scout derives one from the name. Changing the slug on an existing article breaks links to the old URL.
 
 ### Adding images to articles
 

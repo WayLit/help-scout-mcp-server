@@ -22,6 +22,30 @@ const RELATED_IDS =
   "Internal 24-char hex ids of related articles — use article.id, not article.number.";
 
 /**
+ * The slug is the last path segment of the article's public URL. Help Scout
+ * derives one from the name when it is omitted, so callers pass it only to
+ * override that. An agent handed a title or a full URL instead of a slug
+ * fails here rather than publishing a broken link.
+ *
+ * Rejected: whitespace; the delimiters that end a path segment (`/`, `?`,
+ * `#`); backslash, which browsers fold into `/` when parsing an http(s) URL;
+ * `%`, which lets an escape such as `%2F` decode back into a separator; and
+ * the dot segments `.` and `..`, which URL normalization resolves away. Each
+ * would otherwise pass validation and then land the article somewhere other
+ * than the slug asked for.
+ */
+const ArticleSlug = z
+  .string()
+  .regex(
+    /^(?!\.{1,2}$)[^\s/\\?#%]+$/,
+    "Must be a single URL path segment: no whitespace, no / \\ ? # or % characters, and not '.' or '..'. Example: refund-policy.",
+  )
+  .describe(
+    "SEO-friendly last segment of the article's public URL, e.g. refund-policy. " +
+      "Omit to let Help Scout derive one from the name.",
+  );
+
+/**
  * `categories`, `keywords`, and `related` are whole-list fields on update: the
  * Docs API replaces the list outright rather than appending, and only a literal
  * null empties it. Nullable so that clear is expressible at all — with plain
@@ -94,6 +118,7 @@ export const CreateArticleShape = {
   collectionId: z.string(),
   name: z.string(),
   text: z.string().describe("Article body, plain text or HTML."),
+  slug: ArticleSlug.optional(),
   status: z.enum(["published", "notpublished"]).default("notpublished"),
   categories: z.array(z.string()).optional(),
   keywords: z.array(z.string()).optional(),
@@ -104,6 +129,10 @@ export const UpdateArticleShape = {
   articleId: z.string(),
   name: z.string().optional(),
   text: z.string().optional().describe("Article body, plain text or HTML."),
+  slug: ArticleSlug.optional().describe(
+    "SEO-friendly last segment of the article's public URL, e.g. refund-policy. " +
+      "Changing it moves the article to a new URL and breaks links to the old one.",
+  ),
   status: z.enum(["published", "notpublished"]).optional(),
   categories: replaceableList(
     z.string(),

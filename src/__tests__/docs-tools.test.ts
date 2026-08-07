@@ -164,6 +164,41 @@ describe("createArticle", () => {
       expect.objectContaining({ related: [RELATED_A, RELATED_B] }),
     );
   });
+
+  it("passes an explicit slug through to the API", async () => {
+    const { api, tools } = setupServer();
+    api.write.mockResolvedValue({ location: "https://docsapi.helpscout.net/v1/articles/a1" });
+
+    await tools.createArticle.handler(
+      {
+        collectionId: "c1",
+        name: "Refund Policy",
+        text: "Body",
+        status: "notpublished",
+        slug: "refund-policy",
+      },
+      {},
+    );
+
+    expect(api.write).toHaveBeenCalledWith(
+      "POST",
+      "/articles?reload=true",
+      expect.objectContaining({ slug: "refund-policy" }),
+    );
+  });
+
+  it("leaves slug undefined so Help Scout derives one from the name", async () => {
+    const { api, tools } = setupServer();
+    api.write.mockResolvedValue({ location: "https://docsapi.helpscout.net/v1/articles/a1" });
+
+    await tools.createArticle.handler(
+      { collectionId: "c1", name: "Refund Policy", text: "Body", status: "notpublished" },
+      {},
+    );
+
+    const body = api.write.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(body.slug).toBeUndefined();
+  });
 });
 
 describe("updateArticle", () => {
@@ -206,6 +241,15 @@ describe("updateArticle", () => {
     expect(api.write).toHaveBeenCalledWith("PUT", "/articles/a1", { [field]: null });
   });
 
+  it("sends a new slug so the article moves to a new URL", async () => {
+    const { api, tools } = setupServer();
+    api.write.mockResolvedValue({});
+
+    await tools.updateArticle.handler({ articleId: "a1", slug: "refund-policy" }, {});
+
+    expect(api.write).toHaveBeenCalledWith("PUT", "/articles/a1", { slug: "refund-policy" });
+  });
+
   it.each(LIST_FIELDS)("leaves %s untouched when it is omitted", async (field) => {
     const { api, tools } = setupServer();
     api.write.mockResolvedValue({});
@@ -246,6 +290,48 @@ describe("article list field schemas", () => {
   it.each(LIST_FIELDS)("allows null %s on update to clear it, but not on create", (field) => {
     expect(updateSchema.safeParse({ articleId: "a1", [field]: null }).success).toBe(true);
     expect(createSchema.safeParse({ ...article, [field]: null }).success).toBe(false);
+  });
+
+  it("accepts a slug on both create and update", () => {
+    expect(createSchema.safeParse({ ...article, slug: "refund-policy" }).success).toBe(true);
+    expect(updateSchema.safeParse({ articleId: "a1", slug: "refund_policy2" }).success).toBe(true);
+  });
+
+  it("rejects a slug that is a title, a path, or a whole URL", () => {
+    for (const bad of [
+      "Refund Policy",
+      "billing/refund-policy",
+      "https://example.com/article/refund-policy",
+      "refund?policy",
+      "refund#policy",
+      "",
+    ]) {
+      const result = updateSchema.safeParse({ articleId: "a1", slug: bad });
+      expect(result.success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("rejects slugs a browser would normalize into a different URL", () => {
+    for (const bad of [
+      "billing\\refund-policy", // backslash folds into / in an http(s) URL
+      "refund%2Fpolicy", // percent-escape decodes back into a separator
+      "refund%zz", // invalid escape sequence
+      ".", // current-directory segment
+      "..", // parent-directory segment
+    ]) {
+      const result = updateSchema.safeParse({ articleId: "a1", slug: bad });
+      expect(result.success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("keeps dots that are part of a longer slug", () => {
+    expect(updateSchema.safeParse({ articleId: "a1", slug: "api-v1.2" }).success).toBe(true);
+    expect(updateSchema.safeParse({ articleId: "a1", slug: ".hidden" }).success).toBe(true);
+  });
+
+  it("explains what a slug should look like when one is rejected", () => {
+    const result = createSchema.safeParse({ ...article, slug: "Refund Policy" });
+    expect(result.error?.issues[0]?.message).toContain("URL path segment");
   });
 
   it("leaves category ids and keywords unconstrained in format", () => {
