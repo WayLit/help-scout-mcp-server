@@ -24,15 +24,21 @@ const RELATED_IDS =
 /**
  * The slug is the last path segment of the article's public URL. Help Scout
  * derives one from the name when it is omitted, so callers pass it only to
- * override that. Reject whitespace and the characters that delimit a URL —
- * an agent handed a title or a full URL instead of a slug fails here rather
- * than publishing a broken link.
+ * override that. An agent handed a title or a full URL instead of a slug
+ * fails here rather than publishing a broken link.
+ *
+ * Rejected: whitespace; the delimiters that end a path segment (`/`, `?`,
+ * `#`); backslash, which browsers fold into `/` when parsing an http(s) URL;
+ * `%`, which lets an escape such as `%2F` decode back into a separator; and
+ * the dot segments `.` and `..`, which URL normalization resolves away. Each
+ * would otherwise pass validation and then land the article somewhere other
+ * than the slug asked for.
  */
 const ArticleSlug = z
   .string()
   .regex(
-    /^[^\s/?#]+$/,
-    "Must be a single URL path segment — no spaces, slashes, '?' or '#'. Example: refund-policy.",
+    /^(?!\.{1,2}$)[^\s/\\?#%]+$/,
+    "Must be a single URL path segment: no whitespace, no / \\ ? # or % characters, and not '.' or '..'. Example: refund-policy.",
   )
   .describe(
     "SEO-friendly last segment of the article's public URL, e.g. refund-policy. " +
