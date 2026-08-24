@@ -3,7 +3,7 @@
   "version": "1.7.1",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.22.0",
+  "packageManager": "pnpm@11.23.0",
   "description": "Remote MCP server for Help Scout, deployed as a Cloudflare Worker with per-user OAuth",
   "homepage": "https://github.com/WayLit/help-scout-mcp-server#readme",
   "bugs": {
