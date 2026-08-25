@@ -1,9 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { HelpScoutApiError } from "../helpscout-api";
 import { configureRedaction } from "../redaction";
+import { SearchConversationsShape } from "../schemas";
 import { registerTools } from "../tools";
 
 const EXPECTED_TOOL_NAMES = [
@@ -170,6 +172,25 @@ describe("listAllInboxes", () => {
     const payload = parseResult(result) as { inboxes: unknown[]; usage: string };
     expect(payload.inboxes).toEqual([]);
     expect(payload.usage).toMatch(/No inboxes matched/);
+  });
+});
+
+describe("SearchConversationsShape", () => {
+  const schema = z.object(SearchConversationsShape);
+
+  it("accepts a status array and rejects an empty one", () => {
+    expect(schema.safeParse({ status: ["active", "closed"] }).success).toBe(true);
+    expect(schema.safeParse({ status: [] }).success).toBe(false);
+  });
+
+  it("accepts the structured sort fields", () => {
+    expect(schema.safeParse({ sort: "waitingSince" }).success).toBe(true);
+    expect(schema.safeParse({ sort: "customerEmail" }).success).toBe(true);
+  });
+
+  it("accepts tags as an array and rejects a bare string", () => {
+    expect(schema.safeParse({ tags: ["urgent"] }).success).toBe(true);
+    expect(schema.safeParse({ tags: "urgent" }).success).toBe(false);
   });
 });
 
@@ -1045,5 +1066,184 @@ describe("error handling", () => {
     const payload = parseResult(result) as { error: string; tool: string };
     expect(payload.error).toBeTruthy();
     expect(payload.tool).toBe("listAllInboxes");
+  });
+});
+
+describe("searchConversations merged filters", () => {
+  const emptyPage = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
+
+  function paramsOf(api: ReturnType<typeof fakeApi>, call = 0): Record<string, unknown> {
+    return api.get.mock.calls[call][1] as Record<string, unknown>;
+  }
+
+  it("compiles contentTerms into body query syntax", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { contentTerms: ["refund"], status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(paramsOf(api).query).toBe('(body:"refund")');
+  });
+
+  it("ANDs a raw query with compiled convenience filters", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      {
+        query: 'tag:"vip"',
+        subjectTerms: ["invoice"],
+        status: "all",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(paramsOf(api).query).toBe('tag:"vip" AND (subject:"invoice")');
+  });
+
+  it("passes a single tag as the native tag parameter", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { tags: ["urgent"], status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(paramsOf(api).tag).toBe("urgent");
+    expect(paramsOf(api).query).toBeUndefined();
+  });
+
+  it("compiles multiple tags into query syntax instead", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { tags: ["urgent", "vip"], status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(paramsOf(api).tag).toBeUndefined();
+    expect(paramsOf(api).query).toBe('(tag:"urgent" OR tag:"vip")');
+  });
+
+  it("passes structural filters as native request parameters", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      {
+        assignedTo: 7,
+        folderId: 3,
+        conversationNumber: 12345,
+        modifiedSince: "2026-01-01T00:00:00Z",
+        status: "all",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const params = paramsOf(api);
+    expect(params.assigned_to).toBe(7);
+    expect(params.folder).toBe(3);
+    expect(params.number).toBe(12345);
+    expect(params.modifiedSince).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("sweeps every status in a status array and merges the results", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    const result = await tools.searchConversations.handler(
+      {
+        contentTerms: ["bug"],
+        status: ["active", "pending", "closed"],
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const queried = api.get.mock.calls
+      .map((c) => (c[1] as { status?: string } | undefined)?.status)
+      .filter((s): s is string => typeof s === "string");
+    expect(queried.sort()).toEqual(["active", "closed", "pending"]);
+
+    const payload = parseResult(result) as { searchInfo: { statusesSearched: string[] } };
+    expect(payload.searchInfo.statusesSearched.sort()).toEqual([
+      "active",
+      "closed",
+      "pending",
+    ]);
+  });
+
+  it("issues one native request for status:\"all\"", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(paramsOf(api).status).toBe("all");
+  });
+
+  it("echoes the structural filters it applied", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    const result = await tools.searchConversations.handler(
+      { conversationNumber: 999, status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      searchInfo: { filtersApplied?: { conversationNumber?: number } };
+    };
+    expect(payload.searchInfo.filtersApplied?.conversationNumber).toBe(999);
+  });
+
+  it("accepts the widened sort enum", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { status: "all", limit: 50, sort: "waitingSince", order: "asc" },
+      {},
+    );
+
+    expect(paramsOf(api).sortField).toBe("waitingSince");
+    expect(paramsOf(api).sortOrder).toBe("asc");
+  });
+
+  it("rejects a page-URL cursor for a multi-status array", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: ["active", "closed"],
+        cursor: "https://api.helpscout.net/v2/conversations?page=2",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(api.get).not.toHaveBeenCalled();
   });
 });

@@ -11,16 +11,85 @@ import { z } from "zod";
 
 // ── Conversation tools ─────────────────────────────────────────────────────
 
+const ConversationStatus = z.enum(["active", "pending", "closed", "spam"]);
+
 export const SearchConversationsShape = {
-  query: z.string().optional().describe('Help Scout query syntax, e.g. (body:"keyword")'),
+  // Raw Help Scout query syntax, for callers who want full control.
+  query: z
+    .string()
+    .optional()
+    .describe(
+      'Raw Help Scout query syntax, e.g. (body:"keyword"). The convenience filters below compile into query syntax and are AND-ed onto this.',
+    ),
+
+  // Content search
+  contentTerms: z
+    .array(z.string())
+    .optional()
+    .describe('Match any of these terms in the message body (compiled to body:"term").'),
+  subjectTerms: z
+    .array(z.string())
+    .optional()
+    .describe('Match any of these terms in the subject (compiled to subject:"term").'),
+
+  // Identity
+  customerEmail: z.string().optional().describe("Match conversations involving this email."),
+  emailDomain: z
+    .string()
+    .optional()
+    .describe('Match any email at this domain, e.g. "acme.com".'),
+  customerIds: z
+    .array(z.number().int().min(0))
+    .max(100)
+    .optional()
+    .describe("Match conversations belonging to these customer IDs."),
+
+  // Structural
+  assignedTo: z.number().int().min(-1).optional().describe("Assignee user ID (-1 for unassigned)."),
+  folderId: z.number().int().min(0).optional(),
+  conversationNumber: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe("Look up a single ticket by its number, e.g. 12345."),
+
+  // Scope
   inboxId: z.string().optional(),
-  tag: z.string().optional(),
-  status: z.enum(["active", "pending", "closed", "spam"]).optional(),
+  tags: z
+    .array(z.string())
+    .optional()
+    .describe("Match any of these tags. One tag uses the native filter; several compile to an OR."),
+
+  // Status
+  status: z
+    .union([ConversationStatus, z.literal("all"), z.array(ConversationStatus).min(1)])
+    .optional()
+    .describe(
+      'Omit to search active+pending in parallel (closed excluded as noise). Pass one status, an array of statuses to sweep and merge, or "all".',
+    ),
+
+  // Dates
   createdAfter: z.string().optional(),
   createdBefore: z.string().optional(),
+  modifiedSince: z.string().optional(),
+
+  // Paging and shaping
   limit: z.number().min(1).max(100).default(50),
   cursor: z.string().optional(),
-  sort: z.enum(["createdAt", "modifiedAt", "number"]).default("createdAt"),
+  sort: z
+    .enum([
+      "createdAt",
+      "modifiedAt",
+      "number",
+      "waitingSince",
+      "customerName",
+      "customerEmail",
+      "mailboxId",
+      "status",
+      "subject",
+    ])
+    .default("createdAt"),
   order: z.enum(["asc", "desc"]).default("desc"),
   fields: z.array(z.string()).optional(),
 };

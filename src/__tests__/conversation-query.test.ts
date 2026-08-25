@@ -111,4 +111,18 @@ describe("resolveStatusPlan", () => {
       statuses: ["active", "pending", "closed"],
     });
   });
+
+  it("collapses an array of one repeated status to a single request", () => {
+    expect(resolveStatusPlan(["active", "active"])).toEqual({
+      mode: "single",
+      status: "active",
+    });
+  });
+
+  it("drops duplicate statuses while preserving first-seen order", () => {
+    expect(resolveStatusPlan(["active", "pending", "active"])).toEqual({
+      mode: "multi",
+      statuses: ["active", "pending"],
+    });
+  });
 });

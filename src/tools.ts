@@ -30,7 +30,12 @@ import {
   redactText,
   redactThreadBodies,
 } from "./redaction";
-import { escapeQueryTerm, resolveStatusPlan } from "./conversation-query";
+import {
+  buildConversationQuery,
+  combineQueries,
+  escapeQueryTerm,
+  resolveStatusPlan,
+} from "./conversation-query";
 import {
   AdvancedConversationSearchShape,
   AssignConversationShape,
@@ -275,15 +280,16 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
   // ── searchConversations ──────────────────────────────────────────────
   server.tool(
     "searchConversations",
-    "List conversations by status, date, inbox, or tag. Searches active+pending in parallel by default; pass status:\"closed\" to search closed tickets. For keyword search use comprehensiveConversationSearch.",
+    "Search and list conversations. Filter by status, date, inbox, or tags; search content with contentTerms/subjectTerms; look up by customerEmail, emailDomain, customerIds, assignedTo, folderId, or conversationNumber. Searches active+pending in parallel by default — pass status:\"closed\", a status array, or \"all\" to widen.",
     SearchConversationsShape,
     async (input): Promise<CallToolResult> => {
       try {
         const { page: cursorPage, url: cursorUrl } = resolveCursorPage(input.cursor);
-        if (cursorUrl && !input.status) {
+        const plan = resolveStatusPlan(input.status);
+        if (cursorUrl && plan.mode === "multi") {
           throw new HelpScoutApiError(
             "INVALID_INPUT",
-            "A page-URL cursor requires `status` to be set — the default multi-status search merges two independently-paginated requests and can't resume from a single URL. Pass a plain page number instead, or set `status`.",
+            "A page-URL cursor requires a single `status` — a multi-status search merges independently-paginated requests and can't resume from a single URL. Pass a plain page number instead, or set one `status`.",
           );
         }
 
@@ -293,20 +299,28 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           sortField: input.sort,
           sortOrder: input.order,
         };
-        if (input.query) baseParams.query = input.query;
-        if (input.inboxId) baseParams.mailbox = input.inboxId;
-        if (input.tag) baseParams.tag = input.tag;
+
+        // Convenience filters compile to query syntax and AND onto any raw query.
+        const compiled = buildConversationQuery(input);
+        const combined = combineQueries(input.query, compiled);
 
         // NOTE: Only createdAfter goes into the query — createdBefore is
         // applied client-side below. This matches the stdio server behavior;
         // Help Scout's query syntax does not reliably honor a date upper bound.
-        const queryWithDate = appendCreatedAtFilter(
-          baseParams.query as string | undefined,
-          input.createdAfter,
-        );
+        const queryWithDate = appendCreatedAtFilter(combined, input.createdAfter);
         if (queryWithDate) baseParams.query = queryWithDate;
 
-        const plan = resolveStatusPlan(input.status);
+        if (input.inboxId) baseParams.mailbox = input.inboxId;
+        // A single tag uses Help Scout's native filter; several were already
+        // compiled into an OR group by buildConversationQuery above.
+        if (input.tags?.length === 1) baseParams.tag = input.tags[0];
+        if (input.assignedTo !== undefined) baseParams.assigned_to = input.assignedTo;
+        if (input.folderId !== undefined) baseParams.folder = input.folderId;
+        if (input.conversationNumber !== undefined) {
+          baseParams.number = input.conversationNumber;
+        }
+        if (input.modifiedSince) baseParams.modifiedSince = input.modifiedSince;
+
         let conversations: Conversation[] = [];
         let searchedStatuses: string[];
         let pagination: unknown;
@@ -456,9 +470,21 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           pagination,
           nextCursor,
           searchInfo: {
-            query: input.query,
+            query: queryWithDate,
             statusesSearched: searchedStatuses,
             inboxScope: formatInboxScope(input.inboxId),
+            filtersApplied: {
+              contentTerms: input.contentTerms,
+              subjectTerms: input.subjectTerms,
+              customerEmail: input.customerEmail,
+              emailDomain: input.emailDomain,
+              customerIds: input.customerIds,
+              assignedTo: input.assignedTo,
+              folderId: input.folderId,
+              conversationNumber: input.conversationNumber,
+              tags: input.tags,
+              modifiedSince: input.modifiedSince,
+            },
             clientSideFiltering: clientSideFiltered
               ? "createdBefore applied after API fetch"
               : undefined,

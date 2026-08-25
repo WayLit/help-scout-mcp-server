@@ -77,15 +77,20 @@ export type StatusPlan =
  * Omitted means active+pending merged: closed tickets are usually noise for
  * "what's open right now". "all" is Help Scout's own all-status request, so it
  * stays a single call rather than becoming a client-side merge.
+ *
+ * A status array is de-duplicated first (first-seen order wins): a repeated
+ * status would otherwise issue an identical request per copy and double-count
+ * the merged `totalAvailable`.
  */
 export function resolveStatusPlan(status: string | string[] | undefined): StatusPlan {
   if (status === undefined) {
     return { mode: "multi", statuses: ["active", "pending"] };
   }
   if (Array.isArray(status)) {
-    return status.length === 1
-      ? { mode: "single", status: status[0] }
-      : { mode: "multi", statuses: [...status] };
+    const unique = [...new Set(status)];
+    return unique.length === 1
+      ? { mode: "single", status: unique[0] }
+      : { mode: "multi", statuses: unique };
   }
   return { mode: "single", status };
 }
