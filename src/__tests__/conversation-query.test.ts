@@ -11,6 +11,25 @@ describe("escapeQueryTerm", () => {
   it("escapes backslashes before quotes", () => {
     expect(escapeQueryTerm(String.raw`a\b"c`)).toBe(String.raw`a\\b\"c`);
   });
+
+  it("doubles a lone backslash", () => {
+    expect(escapeQueryTerm("\\")).toBe(String.raw`\\`);
+  });
+
+  it("escapes a lone quote so it cannot close the quoted value", () => {
+    expect(escapeQueryTerm('"')).toBe(String.raw`\"`);
+  });
+
+  it("returns an empty string unchanged", () => {
+    expect(escapeQueryTerm("")).toBe("");
+  });
+
+  it("re-escapes a term that already looks escaped", () => {
+    // The backslash is data, not an escape character: escaping it first is
+    // what stops `\"` from surviving as a live quote escape and letting the
+    // following `"` close the value.
+    expect(escapeQueryTerm(String.raw`a\"b`)).toBe(String.raw`a\\\"b`);
+  });
 });
 
 describe("buildConversationQuery", () => {
@@ -50,6 +69,10 @@ describe("buildConversationQuery", () => {
     expect(buildConversationQuery({ contentTerms: ["bug"], subjectTerms: ["crash"] })).toBe(
       '(body:"bug") AND (subject:"crash")',
     );
+  });
+
+  it("compiles a customer email into an email clause", () => {
+    expect(buildConversationQuery({ customerEmail: "rob@acme.com" })).toBe('email:"rob@acme.com"');
   });
 
   it("strips a leading @ from an email domain", () => {

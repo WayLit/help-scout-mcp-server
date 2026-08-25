@@ -6,7 +6,16 @@
  * here does I/O or touches MCP types.
  */
 
-/** Escape a user-supplied term for interpolation into a quoted query value. */
+/**
+ * Escape Help Scout query syntax to prevent injection.
+ *
+ * Every user-supplied term below is interpolated into a double-quoted query
+ * value. Without this, a term containing `"` closes the quote early and the
+ * rest of it is parsed as query syntax — the caller's search silently becomes
+ * whatever operators, fields, or boolean clauses the term smuggled in.
+ * Backslashes are escaped first so an escape character in the term cannot
+ * neutralize the quote escaping that follows.
+ */
 export function escapeQueryTerm(term: string): string {
   return term.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
