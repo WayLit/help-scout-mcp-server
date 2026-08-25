@@ -30,7 +30,7 @@ import {
   redactText,
   redactThreadBodies,
 } from "./redaction";
-import { escapeQueryTerm } from "./conversation-query";
+import { escapeQueryTerm, resolveStatusPlan } from "./conversation-query";
 import {
   AdvancedConversationSearchShape,
   AssignConversationShape,
@@ -306,26 +306,27 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         );
         if (queryWithDate) baseParams.query = queryWithDate;
 
+        const plan = resolveStatusPlan(input.status);
         let conversations: Conversation[] = [];
         let searchedStatuses: string[];
         let pagination: unknown;
         let nextCursor: string | undefined;
 
-        if (input.status) {
+        if (plan.mode === "single") {
           const response = cursorUrl
             ? await api.get<PaginatedResponse<Conversation>>(cursorUrl)
             : await api.get<PaginatedResponse<Conversation>>("/conversations", {
                 ...baseParams,
-                status: input.status,
+                status: plan.status,
               });
           conversations = response._embedded?.conversations || [];
-          searchedStatuses = [input.status];
+          searchedStatuses = [plan.status];
           pagination = response.page;
           nextCursor = response._links?.next?.href;
         } else {
-          // Default excludes "closed" — closed tickets are usually noise for
-          // "what's open right now" queries. Pass status:"closed" to search it.
-          const statuses = ["active", "pending"] as const;
+          // Which statuses land here is decided by resolveStatusPlan; the
+          // default deliberately excludes "closed".
+          const statuses = plan.statuses;
           searchedStatuses = [...statuses];
           const results = await Promise.allSettled(
             statuses.map((status) =>
@@ -409,7 +410,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           conversations = r.filtered;
           clientSideFiltered = r.wasFiltered;
           if (clientSideFiltered) {
-            if (input.status) {
+            if (plan.mode === "single") {
               // Single-status: pagination is Help Scout's `page` object
               pagination = buildFilteredPagination(
                 conversations.length,

@@ -66,3 +66,26 @@ export function combineQueries(
   const parts = [rawQuery, compiled].filter((p): p is string => Boolean(p));
   return parts.length > 0 ? parts.join(" AND ") : undefined;
 }
+
+export type StatusPlan =
+  | { mode: "single"; status: string }
+  | { mode: "multi"; statuses: string[] };
+
+/**
+ * Resolve the `status` input into a concrete request plan.
+ *
+ * Omitted means active+pending merged: closed tickets are usually noise for
+ * "what's open right now". "all" is Help Scout's own all-status request, so it
+ * stays a single call rather than becoming a client-side merge.
+ */
+export function resolveStatusPlan(status: string | string[] | undefined): StatusPlan {
+  if (status === undefined) {
+    return { mode: "multi", statuses: ["active", "pending"] };
+  }
+  if (Array.isArray(status)) {
+    return status.length === 1
+      ? { mode: "single", status: status[0] }
+      : { mode: "multi", statuses: [...status] };
+  }
+  return { mode: "single", status };
+}

@@ -4,6 +4,7 @@ import {
   buildConversationQuery,
   combineQueries,
   escapeQueryTerm,
+  resolveStatusPlan,
 } from "../conversation-query";
 
 describe("escapeQueryTerm", () => {
@@ -75,5 +76,39 @@ describe("combineQueries", () => {
 
   it("ANDs a raw query with a compiled one", () => {
     expect(combineQueries('tag:"vip"', '(body:"x")')).toBe('tag:"vip" AND (body:"x")');
+  });
+});
+
+describe("resolveStatusPlan", () => {
+  it("defaults to an active+pending merge when status is omitted", () => {
+    expect(resolveStatusPlan(undefined)).toEqual({
+      mode: "multi",
+      statuses: ["active", "pending"],
+    });
+  });
+
+  it("never includes closed in the default sweep", () => {
+    const plan = resolveStatusPlan(undefined);
+    expect(plan.mode).toBe("multi");
+    expect(plan.mode === "multi" && plan.statuses).not.toContain("closed");
+  });
+
+  it("treats a single string as one request", () => {
+    expect(resolveStatusPlan("closed")).toEqual({ mode: "single", status: "closed" });
+  });
+
+  it("treats \"all\" as one native request, not a merge", () => {
+    expect(resolveStatusPlan("all")).toEqual({ mode: "single", status: "all" });
+  });
+
+  it("collapses a one-element array to a single request", () => {
+    expect(resolveStatusPlan(["spam"])).toEqual({ mode: "single", status: "spam" });
+  });
+
+  it("treats a multi-element array as a merge", () => {
+    expect(resolveStatusPlan(["active", "pending", "closed"])).toEqual({
+      mode: "multi",
+      statuses: ["active", "pending", "closed"],
+    });
   });
 });
