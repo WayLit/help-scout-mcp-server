@@ -1457,3 +1457,120 @@ describe("searchConversations merged ordering", () => {
     expect(payload.results.map((r) => r.id)).toEqual([11, 1, 2, 12]);
   });
 });
+
+describe("searchConversations createdBefore filtering", () => {
+  function pageOf(conversations: Array<Record<string, unknown>>, totalElements?: number) {
+    return {
+      _embedded: { conversations },
+      page: {
+        number: 0,
+        size: 50,
+        totalElements: totalElements ?? conversations.length,
+        totalPages: 1,
+      },
+    };
+  }
+
+  it("rebuilds single-status pagination so totalResults matches the returned rows", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(
+      pageOf([
+        { id: 1, number: 1, createdAt: "2026-01-01T00:00:00Z" },
+        { id: 2, number: 2, createdAt: "2026-01-05T00:00:00Z" },
+        { id: 3, number: 3, createdAt: "2026-03-01T00:00:00Z" },
+      ]),
+    );
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "closed",
+        createdBefore: "2026-02-01",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      results: Array<{ id: number }>;
+      pagination: { totalResults: number; totalAvailable: number; note: string };
+    };
+    expect(payload.results.map((r) => r.id)).toEqual([1, 2]);
+    expect(payload.pagination.totalResults).toBe(payload.results.length);
+    expect(payload.pagination.totalAvailable).toBe(3);
+    expect(payload.pagination.note).toMatch(/createdBefore/);
+  });
+
+  it("rebuilds merged multi-status pagination so totalResults matches the returned rows", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 1, createdAt: "2026-01-01T00:00:00Z" },
+          { id: 2, createdAt: "2026-03-01T00:00:00Z" },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 3, createdAt: "2026-01-02T00:00:00Z" },
+          { id: 4, createdAt: "2026-03-02T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: ["active", "pending"],
+        createdBefore: "2026-02-01",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      results: Array<{ id: number }>;
+      pagination: {
+        totalResults: number;
+        totalAvailable: number;
+        totalByStatus: Record<string, number>;
+        note: string;
+      };
+    };
+    expect(payload.results.map((r) => r.id)).toEqual([3, 1]);
+    expect(payload.pagination.totalResults).toBe(payload.results.length);
+    // The pre-filter API totals survive the rebuild.
+    expect(payload.pagination.totalAvailable).toBe(4);
+    expect(payload.pagination.totalByStatus).toEqual({ active: 2, pending: 2 });
+    expect(payload.pagination.note).toMatch(/createdBefore/);
+  });
+
+  it("leaves the API page object in place when createdBefore removes nothing", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(pageOf([{ id: 1, createdAt: "2026-01-01T00:00:00Z" }]));
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "closed",
+        createdBefore: "2026-02-01",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      results: unknown[];
+      pagination: { totalElements: number };
+    };
+    expect(payload.results).toHaveLength(1);
+    expect(payload.pagination).toEqual({
+      number: 0,
+      size: 50,
+      totalElements: 1,
+      totalPages: 1,
+    });
+  });
+});
