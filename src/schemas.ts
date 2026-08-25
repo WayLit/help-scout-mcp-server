@@ -11,12 +11,6 @@ import { z } from "zod";
 
 // ── Conversation tools ─────────────────────────────────────────────────────
 
-export const SearchInboxesShape = {
-  query: z.string().describe('Case-insensitive substring match. Use "" to list all inboxes.'),
-  limit: z.number().min(1).max(100).default(50),
-  cursor: z.string().optional(),
-};
-
 export const SearchConversationsShape = {
   query: z.string().optional().describe('Help Scout query syntax, e.g. (body:"keyword")'),
   inboxId: z.string().optional(),
@@ -119,6 +113,10 @@ export const StructuredConversationFilterShape = {
 };
 
 export const ListAllInboxesShape = {
+  query: z
+    .string()
+    .default("")
+    .describe('Case-insensitive substring filter on inbox name. Omit or pass "" to list all.'),
   limit: z.number().min(1).max(100).default(100),
 };
 

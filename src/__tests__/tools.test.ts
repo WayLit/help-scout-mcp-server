@@ -7,7 +7,6 @@ import { configureRedaction } from "../redaction";
 import { registerTools } from "../tools";
 
 const EXPECTED_TOOL_NAMES = [
-  "searchInboxes",
   "searchConversations",
   "getConversationSummary",
   "gatherReplyContext",
@@ -65,7 +64,7 @@ beforeEach(() => {
 });
 
 describe("registerTools", () => {
-  it("registers exactly the expected 24 tool names", () => {
+  it("registers exactly the expected 23 tool names", () => {
     const { tools } = setupServer();
     expect(Object.keys(tools).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
@@ -120,7 +119,7 @@ describe("getServerTime", () => {
   });
 });
 
-describe("searchInboxes", () => {
+describe("listAllInboxes", () => {
   it("filters discovered inboxes by case-insensitive substring", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue({
@@ -133,26 +132,43 @@ describe("searchInboxes", () => {
       },
     });
 
-    const result = await tools.searchInboxes.handler({ query: "support", limit: 50 }, {});
+    const result = await tools.listAllInboxes.handler({ query: "support", limit: 100 }, {});
     const payload = parseResult(result) as {
-      results: Array<{ id: number; name: string }>;
-      totalFound: number;
+      inboxes: Array<{ id: number; name: string }>;
+      totalInboxes: number;
       totalAvailable: number;
     };
 
-    expect(api.get).toHaveBeenCalledWith("/mailboxes", { page: 1, size: 50 });
-    expect(payload.results.map((r) => r.id)).toEqual([1, 3]);
-    expect(payload.totalFound).toBe(2);
+    expect(api.get).toHaveBeenCalledWith("/mailboxes", { page: 1, size: 100 });
+    expect(payload.inboxes.map((r) => r.id)).toEqual([1, 3]);
+    expect(payload.totalInboxes).toBe(2);
     expect(payload.totalAvailable).toBe(3);
+  });
+
+  it("returns every inbox when query is empty", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      _embedded: {
+        mailboxes: [
+          { id: 1, name: "Support" },
+          { id: 2, name: "Billing" },
+        ],
+      },
+    });
+
+    const result = await tools.listAllInboxes.handler({ query: "", limit: 100 }, {});
+    const payload = parseResult(result) as { inboxes: unknown[]; totalInboxes: number };
+    expect(payload.inboxes).toHaveLength(2);
+    expect(payload.totalInboxes).toBe(2);
   });
 
   it("returns an empty result set with a helpful hint when nothing matches", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue({ _embedded: { mailboxes: [{ id: 1, name: "Support" }] } });
 
-    const result = await tools.searchInboxes.handler({ query: "nothing", limit: 50 }, {});
-    const payload = parseResult(result) as { results: unknown[]; usage: string };
-    expect(payload.results).toEqual([]);
+    const result = await tools.listAllInboxes.handler({ query: "nothing", limit: 100 }, {});
+    const payload = parseResult(result) as { inboxes: unknown[]; usage: string };
+    expect(payload.inboxes).toEqual([]);
     expect(payload.usage).toMatch(/No inboxes matched/);
   });
 });
@@ -1003,7 +1019,7 @@ describe("error handling", () => {
     const { api, tools } = setupServer();
     api.get.mockRejectedValue(new HelpScoutApiError("RATE_LIMIT", "rate limited", 429, 30));
 
-    const result = await tools.searchInboxes.handler({ query: "", limit: 50 }, {});
+    const result = await tools.listAllInboxes.handler({ query: "", limit: 100 }, {});
     expect(result.isError).toBe(true);
 
     const payload = parseResult(result) as {
@@ -1016,7 +1032,7 @@ describe("error handling", () => {
     expect(payload.error).toBe("RATE_LIMIT");
     expect(payload.status).toBe(429);
     expect(payload.retryAfter).toBe(30);
-    expect(payload.tool).toBe("searchInboxes");
+    expect(payload.tool).toBe("listAllInboxes");
     expect(payload.requestId).toBeTruthy();
   });
 
@@ -1024,10 +1040,10 @@ describe("error handling", () => {
     const { api, tools } = setupServer();
     api.get.mockRejectedValue(new Error("boom"));
 
-    const result = await tools.searchInboxes.handler({ query: "", limit: 50 }, {});
+    const result = await tools.listAllInboxes.handler({ query: "", limit: 100 }, {});
     expect(result.isError).toBe(true);
     const payload = parseResult(result) as { error: string; tool: string };
     expect(payload.error).toBeTruthy();
-    expect(payload.tool).toBe("searchInboxes");
+    expect(payload.tool).toBe("listAllInboxes");
   });
 });

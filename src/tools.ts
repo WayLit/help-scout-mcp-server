@@ -55,7 +55,6 @@ import {
   Organization,
   SearchConversationsShape,
   SearchCustomersByEmailShape,
-  SearchInboxesShape,
   StructuredConversationFilterShape,
   Thread,
   UpdateConversationStatusShape,
@@ -277,43 +276,6 @@ function pickFirstAndLast(threads: Thread[]): {
 // ── Tool registration ──────────────────────────────────────────────────────
 
 export function registerTools(server: McpServer, api: HelpScoutAPI): void {
-  // ── searchInboxes ────────────────────────────────────────────────────
-  server.tool(
-    "searchInboxes",
-    "List or search inboxes by name. Use empty string to list all.",
-    SearchInboxesShape,
-    async (input): Promise<CallToolResult> => {
-      try {
-        const response = await api.get<PaginatedResponse<Inbox>>("/mailboxes", {
-          page: 1,
-          size: input.limit,
-        });
-        const inboxes = response._embedded?.mailboxes || [];
-        const filtered = inboxes.filter((i) =>
-          i.name.toLowerCase().includes(input.query.toLowerCase()),
-        );
-        return textResult({
-          results: filtered.map((i) => ({
-            id: i.id,
-            name: i.name,
-            email: i.email,
-            createdAt: i.createdAt,
-            updatedAt: i.updatedAt,
-          })),
-          query: input.query,
-          totalFound: filtered.length,
-          totalAvailable: inboxes.length,
-          usage:
-            filtered.length > 0
-              ? 'Use the "id" field with conversation search tools.'
-              : 'No inboxes matched. Try "" to list all.',
-        });
-      } catch (err) {
-        return errorResult(err, "searchInboxes", api.userEmail);
-      }
-    },
-  );
-
   // ── searchConversations ──────────────────────────────────────────────
   server.tool(
     "searchConversations",
@@ -792,7 +754,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
   // ── listAllInboxes ───────────────────────────────────────────────────
   server.tool(
     "listAllInboxes",
-    "List all inboxes with IDs.",
+    'List inboxes with their IDs, optionally filtered by a name substring. Omit query (or pass "") to list all.',
     ListAllInboxesShape,
     async (input): Promise<CallToolResult> => {
       try {
@@ -800,7 +762,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           page: 1,
           size: input.limit,
         });
-        const inboxes = response._embedded?.mailboxes || [];
+        const all = response._embedded?.mailboxes || [];
+        const needle = input.query.toLowerCase();
+        const inboxes = needle ? all.filter((i) => i.name.toLowerCase().includes(needle)) : all;
         return textResult({
           inboxes: inboxes.map((i) => ({
             id: i.id,
@@ -810,8 +774,12 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             updatedAt: i.updatedAt,
           })),
           totalInboxes: inboxes.length,
+          totalAvailable: all.length,
+          query: input.query || undefined,
           usage:
-            'Use the "id" field from these results with conversation search tools.',
+            inboxes.length > 0
+              ? 'Use the "id" field from these results with conversation search tools.'
+              : 'No inboxes matched. Omit `query` (or pass "") to list all.',
         });
       } catch (err) {
         return errorResult(err, "listAllInboxes", api.userEmail);
