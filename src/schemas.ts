@@ -135,61 +135,6 @@ export const DraftReplyShape = {
     .describe("The composed reply body to save as a Help Scout draft."),
 };
 
-export const AdvancedConversationSearchShape = {
-  contentTerms: z.array(z.string()).optional(),
-  subjectTerms: z.array(z.string()).optional(),
-  customerEmail: z.string().optional(),
-  emailDomain: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  inboxId: z.string().optional(),
-  status: z.enum(["active", "pending", "closed", "spam"]).optional(),
-  createdAfter: z.string().optional(),
-  createdBefore: z.string().optional(),
-  limit: z.number().min(1).max(100).default(50),
-};
-
-export const ComprehensiveConversationSearchShape = {
-  searchTerms: z.array(z.string()).min(1, "At least one search term is required"),
-  inboxId: z.string().optional(),
-  statuses: z
-    .array(z.enum(["active", "pending", "closed", "spam"]))
-    .default(["active", "pending", "closed"]),
-  searchIn: z.array(z.enum(["body", "subject", "both"])).default(["both"]),
-  timeframeDays: z.number().min(1).max(365).default(60),
-  createdAfter: z.string().optional(),
-  createdBefore: z.string().optional(),
-  limitPerStatus: z.number().min(1).max(100).default(25),
-};
-
-export const StructuredConversationFilterShape = {
-  assignedTo: z.number().int().min(-1).optional().describe("User ID (-1 for unassigned)"),
-  folderId: z.number().int().min(0).optional(),
-  customerIds: z.array(z.number().int().min(0)).max(100).optional(),
-  conversationNumber: z.number().int().min(1).optional(),
-  status: z.enum(["active", "pending", "closed", "spam", "all"]).default("all"),
-  inboxId: z.string().optional(),
-  tag: z.string().optional(),
-  createdAfter: z.string().optional(),
-  createdBefore: z.string().optional(),
-  modifiedSince: z.string().optional(),
-  sortBy: z
-    .enum([
-      "createdAt",
-      "modifiedAt",
-      "number",
-      "waitingSince",
-      "customerName",
-      "customerEmail",
-      "mailboxId",
-      "status",
-      "subject",
-    ])
-    .default("createdAt"),
-  sortOrder: z.enum(["asc", "desc"]).default("desc"),
-  limit: z.number().min(1).max(100).default(50),
-  cursor: z.string().optional(),
-};
-
 export const ListAllInboxesShape = {
   query: z
     .string()

@@ -17,9 +17,6 @@ const EXPECTED_TOOL_NAMES = [
   "whoami",
   "getServerTime",
   "listAllInboxes",
-  "advancedConversationSearch",
-  "comprehensiveConversationSearch",
-  "structuredConversationFilter",
   "updateConversationStatus",
   "assignConversation",
   "moveConversation",
@@ -66,7 +63,7 @@ beforeEach(() => {
 });
 
 describe("registerTools", () => {
-  it("registers exactly the expected 23 tool names", () => {
+  it("registers exactly the expected 20 tool names", () => {
     const { tools } = setupServer();
     expect(Object.keys(tools).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
@@ -365,22 +362,15 @@ describe("searchConversations cursor pagination", () => {
   });
 });
 
-describe("structuredConversationFilter cursor pagination", () => {
+describe("searchConversations structural cursor pagination", () => {
   const page = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
 
   it("advances to the requested page for a numeric cursor", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue(page);
 
-    await tools.structuredConversationFilter.handler(
-      {
-        assignedTo: 1,
-        cursor: "4",
-        status: "all",
-        sortBy: "createdAt",
-        sortOrder: "desc",
-        limit: 50,
-      },
+    await tools.searchConversations.handler(
+      { assignedTo: 1, cursor: "4", status: "all", sort: "createdAt", order: "desc", limit: 50 },
       {},
     );
 
@@ -394,13 +384,13 @@ describe("structuredConversationFilter cursor pagination", () => {
     const nextHref = "https://api.helpscout.net/v2/conversations?page=2&assigned_to=1";
     api.get.mockResolvedValue(page);
 
-    await tools.structuredConversationFilter.handler(
+    await tools.searchConversations.handler(
       {
         assignedTo: 1,
         cursor: nextHref,
         status: "all",
-        sortBy: "createdAt",
-        sortOrder: "desc",
+        sort: "createdAt",
+        order: "desc",
         limit: 50,
       },
       {},
@@ -413,13 +403,32 @@ describe("structuredConversationFilter cursor pagination", () => {
   it("rejects a non-numeric, non-URL cursor", async () => {
     const { tools } = setupServer();
 
-    const result = await tools.structuredConversationFilter.handler(
+    const result = await tools.searchConversations.handler(
       {
         assignedTo: 1,
         cursor: "bogus",
         status: "all",
-        sortBy: "createdAt",
-        sortOrder: "desc",
+        sort: "createdAt",
+        order: "desc",
+        limit: 50,
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+  });
+
+  it("rejects a URL cursor on a multi-status sweep", async () => {
+    const { tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        cursor: "https://api.helpscout.net/v2/conversations?page=2",
+        status: ["active", "closed"],
+        sort: "createdAt",
+        order: "desc",
         limit: 50,
       },
       {},
