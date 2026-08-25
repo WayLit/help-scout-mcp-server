@@ -7,7 +7,7 @@ describe("buildInstructions", () => {
     const out = buildInstructions([]);
     expect(out).toContain("## Available Inboxes (0 total)");
     expect(out).toContain(
-      "(No inboxes discovered yet — call searchInboxes once tokens are available)",
+      "(No inboxes discovered yet — call listAllInboxes once tokens are available)",
     );
   });
 
@@ -25,8 +25,11 @@ describe("buildInstructions", () => {
   it("includes the tool-selection guide so clients pick the right tool", () => {
     const out = buildInstructions([]);
     expect(out).toContain("## Tool Selection Guide");
-    expect(out).toContain("comprehensiveConversationSearch");
     expect(out).toContain("searchConversations");
+    expect(out).not.toContain("comprehensiveConversationSearch");
+    expect(out).not.toContain("advancedConversationSearch");
+    expect(out).not.toContain("structuredConversationFilter");
+    expect(out).not.toContain("searchInboxes");
     expect(out).toContain("getThreads");
   });
 

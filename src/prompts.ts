@@ -28,39 +28,31 @@ export function registerPrompts(server: McpServer): void {
 
 ## Inbox Discovery
 
-Use \`searchInboxes("")\` to list available inboxes. The result includes IDs you can pass as \`inboxId\` to conversation tools. Inbox IDs are numeric.
+Use \`listAllInboxes\` to list available inboxes. The result includes IDs you can pass as \`inboxId\` to conversation tools. Inbox IDs are numeric.
 
 When a user mentions an inbox by name:
-1. Call \`searchInboxes\` with a substring of the name
+1. Call \`listAllInboxes\` with \`query\` set to a substring of the name
 2. Use the returned id directly
 3. If multiple match, ask the user to clarify
 
-## Tool Selection Guide
+## Searching Conversations
 
-Use \`comprehensiveConversationSearch\` when:
-- Searching by keywords in conversation content
-- User wants a broad search
-- You need simple array input format
-
-Use \`searchConversations\` when:
-- You need Help Scout query syntax (body:, subject:, email:, etc.)
-- You need custom sorting or field selection
-- Simple listing without keywords
-
-Use \`advancedConversationSearch\` when:
-- You need complex boolean logic
-- Searching by email domain
-- Combining multiple search criteria
+\`searchConversations\` is the single conversation search tool. Reach for:
+- \`searchTerms\` for keyword search — matches either the subject or the body, the right default when the caller just wants "tickets mentioning X"
+- \`contentTerms\` (body-only) / \`subjectTerms\` (subject-only) to target one field specifically — passing both narrows to conversations matching in both, it does not widen the search
+- \`customerEmail\` / \`emailDomain\` / \`customerIds\` to scope to a customer
+- \`assignedTo\` / \`folderId\` / \`conversationNumber\` for structural lookups
+- \`query\` for raw Help Scout syntax when you need full control
 
 ## Status Handling
 
-\`searchConversations\` searches active+pending by default — pass \`status: "closed"\` to look in closed tickets. \`comprehensiveConversationSearch\` searches active+pending+closed by default. Specify \`status\`/\`statuses\` to narrow or to include closed.
+\`searchConversations\` searches active+pending by default — pass \`status: "closed"\`, an array like \`["active","pending","closed"]\`, or \`"all"\` to widen. The one exception: a \`conversationNumber\` lookup always searches every status, so a closed ticket is found by number without widening status.
 
 ## Pitfalls
 
-- Don't guess inbox IDs — always look them up via \`searchInboxes\`
-- Default timeframe is 60 days; pass \`createdAfter\` if you need longer
-- For ticket numbers (#12345), use \`structuredConversationFilter\``),
+- Don't guess inbox IDs — always look them up via \`listAllInboxes\`
+- There is no default timeframe; pass \`createdAfter\` to bound a search
+- For ticket numbers (#12345), pass \`conversationNumber\` to \`searchConversations\``),
     }),
   );
 
@@ -83,14 +75,14 @@ Use \`advancedConversationSearch\` when:
 
 1. Call \`getServerTime\` to get the current timestamp.
 2. Subtract 7 days to get \`createdAfter\`.
-${inboxId ? "" : '3. If the user mentioned a specific inbox by name, call `searchInboxes` first to get its ID.\n'}
+${inboxId ? "" : '3. If the user mentioned a specific inbox by name, call `listAllInboxes` first to get its ID.\n'}
 ${inboxId ? "3" : "4"}. Call \`searchConversations\`:
 \`\`\`json
 {
   "createdAfter": "<7-days-ago-iso>",
   "limit": 50,
   "sort": "createdAt",
-  "order": "desc"${inboxId ? `,\n  "inboxId": "${inboxId}"` : ""}${status ? `,\n  "status": "${status}"` : ""}${tag ? `,\n  "tag": "${tag}"` : ""}
+  "order": "desc"${inboxId ? `,\n  "inboxId": "${inboxId}"` : ""}${status ? `,\n  "status": "${status}"` : ""}${tag ? `,\n  "tags": ["${tag}"]` : ""}
 }
 \`\`\`
 
@@ -115,13 +107,13 @@ Use \`getConversationSummary\` for quick overviews or \`getThreads\` for full hi
       const datePart = timeframe ? ',\n  "createdAfter": "<calculated_time>"' : "";
       return userMessage(`To find conversations with urgent/priority tags:${timeNote}
 
-${inboxId ? "" : "If the user mentioned a specific inbox by name, call `searchInboxes` first.\n"}
+${inboxId ? "" : "If the user mentioned a specific inbox by name, call `listAllInboxes` first.\n"}
 Run multiple \`searchConversations\` calls — Help Scout tags vary by org:
 
 \`\`\`json
-{ "tag": "urgent",        "limit": 50, "sort": "createdAt", "order": "desc"${inboxPart}${datePart} }
-{ "tag": "priority",      "limit": 50, "sort": "createdAt", "order": "desc"${inboxPart}${datePart} }
-{ "tag": "high-priority", "limit": 50, "sort": "createdAt", "order": "desc"${inboxPart}${datePart} }
+{ "tags": ["urgent"],        "limit": 50, "sort": "createdAt", "order": "desc"${inboxPart}${datePart} }
+{ "tags": ["priority"],      "limit": 50, "sort": "createdAt", "order": "desc"${inboxPart}${datePart} }
+{ "tags": ["high-priority"], "limit": 50, "sort": "createdAt", "order": "desc"${inboxPart}${datePart} }
 \`\`\`
 
 Common urgent tag variations: urgent, priority, high-priority, escalated, critical, emergency.

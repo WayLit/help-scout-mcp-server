@@ -10,7 +10,7 @@ export function buildInstructions(inboxes: Array<{ id: number; name: string }>):
   const inboxList =
     inboxes.length > 0
       ? inboxes.map((i) => `  - "${i.name}" (ID: ${i.id})`).join("\n")
-      : "  (No inboxes discovered yet — call searchInboxes once tokens are available)";
+      : "  (No inboxes discovered yet — call listAllInboxes once tokens are available)";
 
   return `Help Scout MCP Server - Search and retrieve Help Scout inbox, conversation, customer, and organization data.
 
@@ -20,10 +20,7 @@ ${inboxList}
 ## Tool Selection Guide
 | Task | Tool |
 |------|------|
-| Find tickets by keyword (billing, refund, bug) | comprehensiveConversationSearch |
-| List recent/filtered tickets | searchConversations |
-| Complex filters (email domain, multiple tags) | advancedConversationSearch |
-| Lookup by ticket number (#12345) | structuredConversationFilter |
+| Find, list, or filter tickets (keyword via \`searchTerms\`, tag, assignee, ticket number) | searchConversations |
 | Browse customers by name or query | listCustomers |
 | Find a customer by email | searchCustomersByEmail |
 | Get a full customer profile | getCustomer |
@@ -42,15 +39,17 @@ ${inboxList}
 
 ## Workflow Patterns
 - **Ticket investigation**: searchConversations → getConversationSummary → getThreads
-- **Keyword research**: comprehensiveConversationSearch → getThreads for details
-- **Customer history**: searchCustomersByEmail → getCustomer → structuredConversationFilter/getThreads
+- **Keyword research**: searchConversations (\`searchTerms\` matches subject or body; \`contentTerms\`/\`subjectTerms\` target one field — passing both requires a match in both) → getThreads for details
+- **Customer history**: searchCustomersByEmail → getCustomer → searchConversations (customerIds) → getThreads
 - **Account review**: listOrganizations/getOrganization → getOrganizationMembers → getOrganizationConversations
 - **Resolve a ticket**: locate it (search/lookup) → getThreads to confirm → updateConversationStatus
 - **Reply to a ticket**: gatherReplyContext → compose the reply → draftReply to save it (review & send from Help Scout)
 
 ## Notes
 - Always use inbox IDs from the list above (not names)
-- searchConversations defaults to active+pending (pass status:"closed" to include closed); other search tools include closed by default
+- searchConversations defaults to active+pending; pass status:"closed", a status array like ["active","pending","closed"], or "all" to widen
+- A conversationNumber lookup searches every status automatically, so a closed ticket is still found by number without widening status
+- Tags are passed as an array: tags:["urgent"] filters natively, tags:["urgent","vip"] matches either
 - updateConversationStatus is a write operation — it modifies the live ticket
 - draftReply and createDraftConversation are write operations, but always create drafts — nothing is ever sent to a customer without a human action in Help Scout
 - Use getServerTime for date-relative queries
