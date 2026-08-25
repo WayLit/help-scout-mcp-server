@@ -1116,7 +1116,7 @@ describe("searchConversations merged filters", () => {
       {},
     );
 
-    expect(paramsOf(api).query).toBe('tag:"vip" AND (subject:"invoice")');
+    expect(paramsOf(api).query).toBe('(tag:"vip") AND (subject:"invoice")');
   });
 
   it("passes a single tag as the native tag parameter", async () => {
@@ -1313,5 +1313,76 @@ describe("searchConversations conversationNumber lookup", () => {
     expect(queriedStatuses(api).sort()).toEqual(["active", "pending"]);
     expect(queriedStatuses(api)).not.toContain("all");
     expect(queriedStatuses(api)).not.toContain("closed");
+  });
+});
+
+describe("searchConversations merged ordering", () => {
+  function pageOf(conversations: Array<Record<string, unknown>>) {
+    return {
+      _embedded: { conversations },
+      page: { totalElements: conversations.length },
+    };
+  }
+
+  it("orders the merged window by the requested sort field and direction", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, number: 30, createdAt: "2026-01-03T00:00:00Z" }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, number: 10, createdAt: "2026-01-01T00:00:00Z" },
+          { id: 3, number: 20, createdAt: "2026-01-02T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "number", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ number: number }> };
+    expect(payload.results.map((r) => r.number)).toEqual([10, 20, 30]);
+  });
+
+  it("still returns createdAt desc for the default merged search", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, number: 30, createdAt: "2026-01-01T00:00:00Z" }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, number: 10, createdAt: "2026-01-03T00:00:00Z" },
+          { id: 3, number: 20, createdAt: "2026-01-02T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("leaves the as-fetched order alone for a sort with no client-side field", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, number: 30, createdAt: "2026-01-01T00:00:00Z" }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, number: 10, createdAt: "2026-01-03T00:00:00Z" },
+          { id: 3, number: 20, createdAt: "2026-01-02T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "waitingSince", order: "desc" },
+      {},
+    );
+
+    // waitingSince isn't on the conversation payload, so the merged list keeps
+    // the per-request API order rather than being re-sorted by something else.
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([1, 2, 3]);
   });
 });

@@ -70,13 +70,23 @@ export function buildConversationQuery(
   return parts.length > 0 ? parts.join(" AND ") : undefined;
 }
 
-/** AND a compiled filter expression onto a caller-supplied raw query. */
+/**
+ * AND a compiled filter expression onto a caller-supplied raw query.
+ *
+ * The raw query is parenthesized before the AND: a caller-supplied top-level
+ * OR (`body:"a" OR body:"b"`) would otherwise bind as
+ * `body:"a" OR (body:"b" AND ...)` under Lucene precedence and silently return
+ * the wrong rows. Every group buildConversationQuery emits is already
+ * self-parenthesized, so the raw operand is the only one that needs wrapping —
+ * and only when there is something to AND it with.
+ */
 export function combineQueries(
   rawQuery: string | undefined,
   compiled: string | undefined,
 ): string | undefined {
-  const parts = [rawQuery, compiled].filter((p): p is string => Boolean(p));
-  return parts.length > 0 ? parts.join(" AND ") : undefined;
+  if (!rawQuery) return compiled;
+  if (!compiled) return rawQuery;
+  return `(${rawQuery}) AND ${compiled}`;
 }
 
 export type StatusPlan =

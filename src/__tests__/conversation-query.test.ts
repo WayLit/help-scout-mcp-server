@@ -93,7 +93,17 @@ describe("combineQueries", () => {
   });
 
   it("ANDs a raw query with a compiled one", () => {
-    expect(combineQueries('tag:"vip"', '(body:"x")')).toBe('tag:"vip" AND (body:"x")');
+    expect(combineQueries('tag:"vip"', '(body:"x")')).toBe('(tag:"vip") AND (body:"x")');
+  });
+
+  it("parenthesizes the raw query so a top-level OR can't escape the AND", () => {
+    expect(combineQueries('body:"a" OR body:"b"', '(body:"x")')).toBe(
+      '(body:"a" OR body:"b") AND (body:"x")',
+    );
+  });
+
+  it("leaves the raw query unwrapped when there is nothing to AND it with", () => {
+    expect(combineQueries('body:"a" OR body:"b"', undefined)).toBe('body:"a" OR body:"b"');
   });
 });
 

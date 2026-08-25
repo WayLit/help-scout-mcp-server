@@ -238,6 +238,63 @@ function buildFilteredPagination(
   };
 }
 
+/**
+ * How each `sort` value is read off a conversation client-side. Date fields are
+ * parsed to epoch millis so they compare chronologically rather than
+ * lexically; everything else compares as a number or via localeCompare.
+ *
+ * `waitingSince` has no entry on purpose: it is not part of the conversation
+ * payload we model, so a merged search cannot order by it client-side.
+ */
+const MERGE_SORT_VALUES: Record<
+  string,
+  (c: Conversation) => number | string | undefined
+> = {
+  createdAt: (c) => Date.parse(c.createdAt),
+  modifiedAt: (c) => Date.parse(c.updatedAt),
+  number: (c) => c.number,
+  mailboxId: (c) => c.mailbox?.id,
+  customerName: (c) =>
+    `${c.customer?.firstName ?? ""} ${c.customer?.lastName ?? ""}`.trim(),
+  customerEmail: (c) => c.customer?.email,
+  status: (c) => c.status,
+  subject: (c) => c.subject,
+};
+
+function isMissingSortValue(value: number | string | undefined): boolean {
+  if (value === undefined || value === "") return true;
+  return typeof value === "number" && Number.isNaN(value);
+}
+
+/**
+ * Order the merged multi-status window by the caller's `sort`/`order`.
+ *
+ * Each per-status request is already sorted by the API, but the merge
+ * interleaves several of them, so the combined list has to be re-ordered. When
+ * the sort field has no client-side equivalent we return the list untouched:
+ * leaving it in as-fetched (API-sorted) order beats re-sorting it by a field
+ * the caller did not ask for. A conversation missing the sort value sorts last
+ * in either direction.
+ */
+function sortMergedConversations(
+  conversations: Conversation[],
+  sort: string,
+  order: string,
+): Conversation[] {
+  const readValue = MERGE_SORT_VALUES[sort];
+  if (!readValue) return conversations;
+  const direction = order === "asc" ? 1 : -1;
+  return [...conversations].sort((a, b) => {
+    const av = readValue(a);
+    const bv = readValue(b);
+    const aMissing = isMissingSortValue(av);
+    const bMissing = isMissingSortValue(bv);
+    if (aMissing || bMissing) return aMissing === bMissing ? 0 : aMissing ? 1 : -1;
+    if (typeof av === "number" && typeof bv === "number") return direction * (av - bv);
+    return direction * String(av).localeCompare(String(bv));
+  });
+}
+
 function calculateTimeRange(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -398,9 +455,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
               (s) => !failed.some((f) => f.status === s),
             );
           }
-          conversations.sort(
-            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-          );
+          // The merge interleaves independently-sorted pages, so re-apply the
+          // caller's sort across the merged window before truncating to limit.
+          conversations = sortMergedConversations(conversations, input.sort, input.order);
           if (conversations.length > input.limit) {
             conversations = conversations.slice(0, input.limit);
           }

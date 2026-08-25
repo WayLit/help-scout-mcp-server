@@ -95,7 +95,10 @@ export const SearchConversationsShape = {
       "status",
       "subject",
     ])
-    .default("createdAt"),
+    .default("createdAt")
+    .describe(
+      "On a multi-status search the ordering applies across the merged window, not globally: each status is paginated independently, so only the fetched rows can be ordered together. waitingSince cannot be ordered client-side and keeps the per-request API order.",
+    ),
   order: z.enum(["asc", "desc"]).default("desc"),
   fields: z.array(z.string()).optional(),
 };
