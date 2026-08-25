@@ -30,6 +30,7 @@ import {
   redactText,
   redactThreadBodies,
 } from "./redaction";
+import { escapeQueryTerm } from "./conversation-query";
 import {
   AdvancedConversationSearchShape,
   AssignConversationShape,
@@ -133,11 +134,6 @@ function errorResult(
     ],
     isError: true,
   };
-}
-
-/** Escape Help Scout query syntax to prevent injection. */
-function escapeQueryTerm(term: string): string {
-  return term.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 /** Append a createdAt date range to an existing Help Scout query. */
