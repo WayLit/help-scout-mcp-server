@@ -12,6 +12,7 @@ export function escapeQueryTerm(term: string): string {
 }
 
 export interface ConversationQueryFilters {
+  searchTerms?: string[];
   contentTerms?: string[];
   subjectTerms?: string[];
   customerEmail?: string;
@@ -28,11 +29,22 @@ export interface ConversationQueryFilters {
  * A single tag is deliberately NOT compiled here — the caller passes it as the
  * native `tag` request parameter instead. Only a multi-tag OR needs query
  * syntax, and the native parameter is the path already proven in production.
+ *
+ * `searchTerms` matches either field, so it is the right default for "find
+ * tickets mentioning X"; `contentTerms`/`subjectTerms` stay field-specific and,
+ * being separate groups, AND with each other.
  */
 export function buildConversationQuery(
   input: ConversationQueryFilters,
 ): string | undefined {
   const parts: string[] = [];
+  if (input.searchTerms?.length) {
+    // One group per term, each matching either field, all OR-ed together.
+    const perTerm = input.searchTerms.map(
+      (t) => `(body:"${escapeQueryTerm(t)}" OR subject:"${escapeQueryTerm(t)}")`,
+    );
+    parts.push(perTerm.length === 1 ? perTerm[0] : `(${perTerm.join(" OR ")})`);
+  }
   if (input.contentTerms?.length) {
     parts.push(
       `(${input.contentTerms.map((t) => `body:"${escapeQueryTerm(t)}"`).join(" OR ")})`,

@@ -1088,6 +1088,18 @@ describe("searchConversations merged filters", () => {
     expect(paramsOf(api).query).toBe('(body:"refund")');
   });
 
+  it("searches both subject and body for searchTerms", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { searchTerms: ["refund"], status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(paramsOf(api).query).toBe('(body:"refund" OR subject:"refund")');
+  });
+
   it("ANDs a raw query with compiled convenience filters", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue(emptyPage);
@@ -1245,5 +1257,61 @@ describe("searchConversations merged filters", () => {
     expect(result.isError).toBe(true);
     expect(payload.error).toBe("INVALID_INPUT");
     expect(api.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("searchConversations conversationNumber lookup", () => {
+  const emptyPage = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
+
+  function queriedStatuses(api: ReturnType<typeof fakeApi>): string[] {
+    return api.get.mock.calls
+      .map((c) => (c[1] as { status?: string } | undefined)?.status)
+      .filter((s): s is string => typeof s === "string");
+  }
+
+  it("searches every status when only a conversationNumber is given", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { conversationNumber: 12345, limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(queriedStatuses(api)).toEqual(["all"]);
+  });
+
+  it("lets an explicit status win over the conversationNumber default", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      {
+        conversationNumber: 12345,
+        status: "active",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(queriedStatuses(api)).toEqual(["active"]);
+  });
+
+  it("leaves the active+pending default alone for searches without a conversationNumber", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { searchTerms: ["refund"], limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(queriedStatuses(api).sort()).toEqual(["active", "pending"]);
+    expect(queriedStatuses(api)).not.toContain("all");
+    expect(queriedStatuses(api)).not.toContain("closed");
   });
 });

@@ -280,12 +280,19 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
   // ── searchConversations ──────────────────────────────────────────────
   server.tool(
     "searchConversations",
-    "Search and list conversations. Filter by status, date, inbox, or tags; search content with contentTerms/subjectTerms; look up by customerEmail, emailDomain, customerIds, assignedTo, folderId, or conversationNumber. Searches active+pending in parallel by default — pass status:\"closed\", a status array, or \"all\" to widen.",
+    "Search and list conversations. Filter by status, date, inbox, or tags; search content with searchTerms (subject or body), or narrow to one field with contentTerms/subjectTerms; look up by customerEmail, emailDomain, customerIds, assignedTo, folderId, or conversationNumber. Searches active+pending in parallel by default — pass status:\"closed\", a status array, or \"all\" to widen; a conversationNumber lookup searches every status.",
     SearchConversationsShape,
     async (input): Promise<CallToolResult> => {
       try {
         const { page: cursorPage, url: cursorUrl } = resolveCursorPage(input.cursor);
-        const plan = resolveStatusPlan(input.status);
+        // A lookup by unique identifier is not a "what's open right now" browse,
+        // so the closed-excluded default doesn't apply to it: a bare
+        // conversationNumber searches every status, because people look up old
+        // ticket numbers precisely when those tickets are resolved. An explicit
+        // `status` from the caller always wins.
+        const statusInput =
+          input.status ?? (input.conversationNumber !== undefined ? "all" : undefined);
+        const plan = resolveStatusPlan(statusInput);
         if (cursorUrl && plan.mode === "multi") {
           throw new HelpScoutApiError(
             "INVALID_INPUT",
@@ -474,6 +481,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             statusesSearched: searchedStatuses,
             inboxScope: formatInboxScope(input.inboxId),
             filtersApplied: {
+              searchTerms: input.searchTerms,
               contentTerms: input.contentTerms,
               subjectTerms: input.subjectTerms,
               customerEmail: input.customerEmail,

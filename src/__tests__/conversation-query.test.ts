@@ -28,6 +28,24 @@ describe("buildConversationQuery", () => {
     expect(buildConversationQuery({ subjectTerms: ["invoice"] })).toBe('(subject:"invoice")');
   });
 
+  it("searches both body and subject for a single searchTerm", () => {
+    expect(buildConversationQuery({ searchTerms: ["refund"] })).toBe(
+      '(body:"refund" OR subject:"refund")',
+    );
+  });
+
+  it("ORs the per-term groups for several searchTerms", () => {
+    expect(buildConversationQuery({ searchTerms: ["refund", "chargeback"] })).toBe(
+      '((body:"refund" OR subject:"refund") OR (body:"chargeback" OR subject:"chargeback"))',
+    );
+  });
+
+  it("ANDs searchTerms with another filter group", () => {
+    expect(
+      buildConversationQuery({ searchTerms: ["refund"], tags: ["vip", "urgent"] }),
+    ).toBe('(body:"refund" OR subject:"refund") AND (tag:"vip" OR tag:"urgent")');
+  });
+
   it("ANDs distinct filter groups together", () => {
     expect(
       buildConversationQuery({ contentTerms: ["bug"], subjectTerms: ["crash"] }),

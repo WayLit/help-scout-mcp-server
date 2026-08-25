@@ -23,6 +23,12 @@ export const SearchConversationsShape = {
     ),
 
   // Content search
+  searchTerms: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Match any of these terms in either the subject or the body. The right default for keyword search — contentTerms/subjectTerms narrow to one field.",
+    ),
   contentTerms: z
     .array(z.string())
     .optional()
@@ -66,7 +72,7 @@ export const SearchConversationsShape = {
     .union([ConversationStatus, z.literal("all"), z.array(ConversationStatus).min(1)])
     .optional()
     .describe(
-      'Omit to search active+pending in parallel (closed excluded as noise). Pass one status, an array of statuses to sweep and merge, or "all".',
+      'Omit to search active+pending in parallel (closed excluded as noise), except for a conversationNumber lookup, which searches every status. Pass one status, an array of statuses to sweep and merge, or "all".',
     ),
 
   // Dates
