@@ -41,15 +41,15 @@ describe("buildConversationQuery", () => {
   });
 
   it("ANDs searchTerms with another filter group", () => {
-    expect(
-      buildConversationQuery({ searchTerms: ["refund"], tags: ["vip", "urgent"] }),
-    ).toBe('(body:"refund" OR subject:"refund") AND (tag:"vip" OR tag:"urgent")');
+    expect(buildConversationQuery({ searchTerms: ["refund"], tags: ["vip", "urgent"] })).toBe(
+      '(body:"refund" OR subject:"refund") AND (tag:"vip" OR tag:"urgent")',
+    );
   });
 
   it("ANDs distinct filter groups together", () => {
-    expect(
-      buildConversationQuery({ contentTerms: ["bug"], subjectTerms: ["crash"] }),
-    ).toBe('(body:"bug") AND (subject:"crash")');
+    expect(buildConversationQuery({ contentTerms: ["bug"], subjectTerms: ["crash"] })).toBe(
+      '(body:"bug") AND (subject:"crash")',
+    );
   });
 
   it("strips a leading @ from an email domain", () => {
@@ -63,9 +63,7 @@ describe("buildConversationQuery", () => {
   });
 
   it("compiles multiple tags as an OR group", () => {
-    expect(buildConversationQuery({ tags: ["urgent", "vip"] })).toBe(
-      '(tag:"urgent" OR tag:"vip")',
-    );
+    expect(buildConversationQuery({ tags: ["urgent", "vip"] })).toBe('(tag:"urgent" OR tag:"vip")');
   });
 
   it("leaves a single tag to the native request parameter", () => {
@@ -125,7 +123,7 @@ describe("resolveStatusPlan", () => {
     expect(resolveStatusPlan("closed")).toEqual({ mode: "single", status: "closed" });
   });
 
-  it("treats \"all\" as one native request, not a merge", () => {
+  it('treats "all" as one native request, not a merge', () => {
     expect(resolveStatusPlan("all")).toEqual({ mode: "single", status: "all" });
   });
 

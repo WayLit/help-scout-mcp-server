@@ -34,9 +34,7 @@ export interface ConversationQueryFilters {
  * tickets mentioning X"; `contentTerms`/`subjectTerms` stay field-specific and,
  * being separate groups, AND with each other.
  */
-export function buildConversationQuery(
-  input: ConversationQueryFilters,
-): string | undefined {
+export function buildConversationQuery(input: ConversationQueryFilters): string | undefined {
   const parts: string[] = [];
   if (input.searchTerms?.length) {
     // One group per term, each matching either field, all OR-ed together.
@@ -46,9 +44,7 @@ export function buildConversationQuery(
     parts.push(perTerm.length === 1 ? perTerm[0] : `(${perTerm.join(" OR ")})`);
   }
   if (input.contentTerms?.length) {
-    parts.push(
-      `(${input.contentTerms.map((t) => `body:"${escapeQueryTerm(t)}"`).join(" OR ")})`,
-    );
+    parts.push(`(${input.contentTerms.map((t) => `body:"${escapeQueryTerm(t)}"`).join(" OR ")})`);
   }
   if (input.subjectTerms?.length) {
     parts.push(
@@ -89,9 +85,7 @@ export function combineQueries(
   return `(${rawQuery}) AND ${compiled}`;
 }
 
-export type StatusPlan =
-  | { mode: "single"; status: string }
-  | { mode: "multi"; statuses: string[] };
+export type StatusPlan = { mode: "single"; status: string } | { mode: "multi"; statuses: string[] };
 
 /**
  * Resolve the `status` input into a concrete request plan.
