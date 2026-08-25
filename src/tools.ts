@@ -236,8 +236,12 @@ function buildFilteredPagination(
  * parsed to epoch millis so they compare chronologically rather than
  * lexically; everything else compares as a number or via localeCompare.
  *
- * `waitingSince` has no entry on purpose: it is not part of the conversation
- * payload we model, so a merged search cannot order by it client-side.
+ * Every reader here is best-effort: a payload that omits the field yields a
+ * missing value, which `isMissingSortValue` sorts last rather than throwing.
+ * `waitingSince` is the clearest case — Help Scout accepts it as a `sortField`
+ * but the documented conversation response carries `customerWaitingSince` as
+ * an object instead, so we read that first and fall back to a bare
+ * `waitingSince` if a payload happens to supply one.
  */
 const MERGE_SORT_VALUES: Record<
   string,
@@ -246,6 +250,7 @@ const MERGE_SORT_VALUES: Record<
   createdAt: (c) => Date.parse(c.createdAt),
   modifiedAt: (c) => Date.parse(c.updatedAt),
   number: (c) => c.number,
+  waitingSince: (c) => Date.parse(c.customerWaitingSince?.time ?? c.waitingSince ?? ""),
   mailboxId: (c) => c.mailbox?.id,
   customerName: (c) =>
     `${c.customer?.firstName ?? ""} ${c.customer?.lastName ?? ""}`.trim(),
@@ -260,24 +265,54 @@ function isMissingSortValue(value: number | string | undefined): boolean {
 }
 
 /**
+ * Round-robin the per-status windows into one list: the first row of each
+ * status, then the second of each, and so on.
+ *
+ * This is the base order for the merge, and it is what survives when the sort
+ * field cannot be compared client-side. Concatenating instead would let the
+ * first status consume the whole `limit` on truncation — a default
+ * `searchConversations({ sort: "waitingSince", limit: 50 })` fans out to
+ * active+pending, and 50 active rows followed by 50 pending rows truncates to
+ * 50 active and 0 pending. Each per-status list already arrives sorted
+ * server-side by the requested `sortField`, so round-robin keeps that order
+ * within a status while giving every status a proportional share of the
+ * window.
+ */
+function interleaveByStatus(byStatus: Conversation[][]): Conversation[] {
+  const out: Conversation[] = [];
+  const longest = Math.max(0, ...byStatus.map((list) => list.length));
+  for (let i = 0; i < longest; i++) {
+    for (const list of byStatus) {
+      const conversation = list[i];
+      if (conversation !== undefined) out.push(conversation);
+    }
+  }
+  return out;
+}
+
+/**
  * Order the merged multi-status window by the caller's `sort`/`order`.
  *
- * Each per-status request is already sorted by the API, but the merge
- * interleaves several of them, so the combined list has to be re-ordered. When
- * the sort field has no client-side equivalent we return the list untouched:
- * leaving it in as-fetched (API-sorted) order beats re-sorting it by a field
- * the caller did not ask for. A conversation missing the sort value sorts last
- * in either direction.
+ * Each per-status request is already sorted by the API, but the merge combines
+ * several of them, so the result has to be re-ordered. The per-status lists are
+ * interleaved first and the comparator is then applied on top of that base:
+ * `Array.prototype.sort` is stable, so rows the comparator cannot separate —
+ * a sort field the payload omits entirely, or one with no client-side reader at
+ * all — keep the interleaved order instead of collapsing back to
+ * status-concatenation order and biasing the truncated window toward whichever
+ * status was fetched first. A conversation missing the sort value sorts last in
+ * either direction.
  */
 function sortMergedConversations(
-  conversations: Conversation[],
+  byStatus: Conversation[][],
   sort: string,
   order: string,
 ): Conversation[] {
+  const interleaved = interleaveByStatus(byStatus);
   const readValue = MERGE_SORT_VALUES[sort];
-  if (!readValue) return conversations;
+  if (!readValue) return interleaved;
   const direction = order === "asc" ? 1 : -1;
-  return [...conversations].sort((a, b) => {
+  return interleaved.sort((a, b) => {
     const av = readValue(a);
     const bv = readValue(b);
     const aMissing = isMissingSortValue(av);
@@ -387,6 +422,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           );
 
           const seen = new Set<number>();
+          // Kept per status rather than flattened as we go: the merge below
+          // needs the grouping to interleave the windows fairly.
+          const byStatus: Conversation[][] = [];
           const failed: Array<{ status: string; message: string; code: string }> = [];
           const totalByStatus: Record<string, number> = {};
           let totalAvailable = 0;
@@ -401,12 +439,14 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
               if ((r.value.page?.number ?? 0) + 1 < (r.value.page?.totalPages ?? 0)) {
                 hasMorePages = true;
               }
+              const statusWindow: Conversation[] = [];
               for (const c of r.value._embedded?.conversations || []) {
                 if (!seen.has(c.id)) {
                   seen.add(c.id);
-                  conversations.push(c);
+                  statusWindow.push(c);
                 }
               }
+              byStatus.push(statusWindow);
             } else {
               const reason = r.reason;
               if (!isHelpScoutApiError(reason)) throw reason;
@@ -426,9 +466,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
               (s) => !failed.some((f) => f.status === s),
             );
           }
-          // The merge interleaves independently-sorted pages, so re-apply the
+          // The merge combines independently-sorted pages, so re-apply the
           // caller's sort across the merged window before truncating to limit.
-          conversations = sortMergedConversations(conversations, input.sort, input.order);
+          conversations = sortMergedConversations(byStatus, input.sort, input.order);
           if (conversations.length > input.limit) {
             conversations = conversations.slice(0, input.limit);
           }

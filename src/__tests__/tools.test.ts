@@ -1373,14 +1373,76 @@ describe("searchConversations merged ordering", () => {
     expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
   });
 
-  it("leaves the as-fetched order alone for a sort with no client-side field", async () => {
+  it("orders the merged window by customerWaitingSince when the payload carries it", async () => {
     const { api, tools } = setupServer();
     api.get
-      .mockResolvedValueOnce(pageOf([{ id: 1, number: 30, createdAt: "2026-01-01T00:00:00Z" }]))
+      .mockResolvedValueOnce(
+        pageOf([{ id: 1, customerWaitingSince: { time: "2026-01-05T00:00:00Z" } }]),
+      )
       .mockResolvedValueOnce(
         pageOf([
-          { id: 2, number: 10, createdAt: "2026-01-03T00:00:00Z" },
-          { id: 3, number: 20, createdAt: "2026-01-02T00:00:00Z" },
+          { id: 2, customerWaitingSince: { time: "2026-01-01T00:00:00Z" } },
+          { id: 3, customerWaitingSince: { time: "2026-01-03T00:00:00Z" } },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "waitingSince", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("interleaves the per-status windows when the payload omits the sort field", async () => {
+    const { api, tools } = setupServer();
+    // The documented Mailbox API conversation response has no top-level
+    // `waitingSince` — it carries `customerWaitingSince` instead — so a real
+    // payload can leave the comparator with nothing to separate. When that
+    // happens the merged window must still give every status a share of
+    // `limit`: concatenating would let "active" consume all four slots.
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 1, status: "active", createdAt: "2026-01-01T00:00:00Z" },
+          { id: 2, status: "active", createdAt: "2026-01-02T00:00:00Z" },
+          { id: 3, status: "active", createdAt: "2026-01-03T00:00:00Z" },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 11, status: "pending", createdAt: "2026-01-04T00:00:00Z" },
+          { id: 12, status: "pending", createdAt: "2026-01-05T00:00:00Z" },
+          { id: 13, status: "pending", createdAt: "2026-01-06T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { limit: 4, sort: "waitingSince", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      results: Array<{ id: number; status: string }>;
+    };
+    expect(payload.results.map((r) => r.id)).toEqual([1, 11, 2, 12]);
+    expect(payload.results.filter((r) => r.status === "pending")).toHaveLength(2);
+  });
+
+  it("sorts rows missing the sort value last, in interleaved order", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 1, status: "active" },
+          { id: 2, status: "active" },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 11, status: "pending", customerWaitingSince: { time: "2026-01-09T00:00:00Z" } },
+          { id: 12, status: "pending" },
         ]),
       );
 
@@ -1389,9 +1451,9 @@ describe("searchConversations merged ordering", () => {
       {},
     );
 
-    // waitingSince isn't on the conversation payload, so the merged list keeps
-    // the per-request API order rather than being re-sorted by something else.
+    // 11 is the only row with a waiting timestamp, so it leads; the rest keep
+    // their interleaved order ([1, 11, 2, 12] with 11 lifted out).
     const payload = parseResult(result) as { results: Array<{ id: number }> };
-    expect(payload.results.map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(payload.results.map((r) => r.id)).toEqual([11, 1, 2, 12]);
   });
 });

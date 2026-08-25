@@ -97,7 +97,7 @@ export const SearchConversationsShape = {
     ])
     .default("createdAt")
     .describe(
-      "On a multi-status search the ordering applies across the merged window, not globally: each status is paginated independently, so only the fetched rows can be ordered together. waitingSince cannot be ordered client-side and keeps the per-request API order.",
+      "On a multi-status search the ordering applies across the merged window, not globally: each status is paginated independently, so only the fetched rows can be ordered together. Rows whose payload omits the sort field keep a round-robin interleave of the per-status results, so no one status fills the window.",
     ),
   order: z.enum(["asc", "desc"]).default("desc"),
   fields: z.array(z.string()).optional(),
@@ -280,6 +280,17 @@ export interface Conversation {
   mailbox: { id: number; name: string };
   tags: Array<{ id: number; name: string; color: string }>;
   threads: number;
+  /**
+   * How long the customer has been waiting. Both spellings are optional
+   * because neither is guaranteed: the documented Mailbox API conversation
+   * payload carries `customerWaitingSince` as an object, and accepts
+   * `waitingSince` only as a `sortField` — no top-level `waitingSince` field
+   * appears in the documented response. Modelling both lets the client-side
+   * merge sort read whichever a payload actually supplies and degrade to
+   * "missing" when it supplies neither. See MERGE_SORT_VALUES in ./tools.
+   */
+  customerWaitingSince?: { time?: string; friendly?: string };
+  waitingSince?: string;
 }
 
 export interface Thread {

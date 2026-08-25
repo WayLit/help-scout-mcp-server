@@ -14,15 +14,15 @@ import { registerTools } from "../tools";
  * `listAllInboxes`, taking the surface from 24 tools down to 20. The plan
  * projected this would also shrink the serialized tool surface to roughly
  * 2,600 tokens; it didn't. Measured after the consolidation: 20 tools,
- * 12,827 chars, ~3,207 approx tokens — `searchConversations` alone accounts
- * for 3,355 of those chars (26% of the whole surface), because it now
+ * 12,879 chars, ~3,220 approx tokens — `searchConversations` alone accounts
+ * for 3,407 of those chars (26% of the whole surface), because it now
  * carries the parameters of all four retired tools. That is the correct,
  * expected shape: trimming its `.describe()` text to chase a token budget
  * would make the merged tool harder to use correctly.
  *
  * This test exists to catch *future* bloat, not to enforce the abandoned
  * 2,600 target. The 3,300-token ceiling below leaves headroom over the
- * measured ~3,207 for incidental description wording changes, while still
+ * measured ~3,220 for incidental description wording changes, while still
  * failing if a future change (e.g. adding another tool, or a large new
  * parameter block) meaningfully grows the surface again.
  */
