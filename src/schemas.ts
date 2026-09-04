@@ -11,22 +11,94 @@ import { z } from "zod";
 
 // ── Conversation tools ─────────────────────────────────────────────────────
 
-export const SearchInboxesShape = {
-  query: z.string().describe('Case-insensitive substring match. Use "" to list all inboxes.'),
-  limit: z.number().min(1).max(100).default(50),
-  cursor: z.string().optional(),
-};
+const ConversationStatus = z.enum(["active", "pending", "closed", "spam"]);
 
 export const SearchConversationsShape = {
-  query: z.string().optional().describe('Help Scout query syntax, e.g. (body:"keyword")'),
+  // Raw Help Scout query syntax, for callers who want full control.
+  query: z
+    .string()
+    .optional()
+    .describe(
+      'Raw Help Scout query syntax, e.g. (body:"keyword"). The convenience filters below compile into query syntax and are AND-ed onto this.',
+    ),
+
+  // Content search
+  searchTerms: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Match any of these terms in either the subject or the body. The right default for keyword search — contentTerms/subjectTerms narrow to one field.",
+    ),
+  contentTerms: z
+    .array(z.string())
+    .optional()
+    .describe('Match any of these terms in the message body (compiled to body:"term").'),
+  subjectTerms: z
+    .array(z.string())
+    .optional()
+    .describe('Match any of these terms in the subject (compiled to subject:"term").'),
+
+  // Identity
+  customerEmail: z.string().optional().describe("Match conversations involving this email."),
+  emailDomain: z
+    .string()
+    .optional()
+    .describe('Match any email at this domain, e.g. "acme.com".'),
+  customerIds: z
+    .array(z.number().int().min(0))
+    .max(100)
+    .optional()
+    .describe("Match conversations belonging to these customer IDs."),
+
+  // Structural
+  assignedTo: z.number().int().min(-1).optional().describe("Assignee user ID (-1 for unassigned)."),
+  folderId: z.number().int().min(0).optional(),
+  conversationNumber: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe("Look up a single ticket by its number, e.g. 12345."),
+
+  // Scope
   inboxId: z.string().optional(),
-  tag: z.string().optional(),
-  status: z.enum(["active", "pending", "closed", "spam"]).optional(),
+  tags: z
+    .array(z.string())
+    .optional()
+    .describe("Match any of these tags. One tag uses the native filter; several compile to an OR."),
+
+  // Status
+  status: z
+    .union([ConversationStatus, z.literal("all"), z.array(ConversationStatus).min(1)])
+    .optional()
+    .describe(
+      'Omit to search active+pending in parallel (closed excluded as noise), except for a conversationNumber lookup, which searches every status. Pass one status, an array of statuses to sweep and merge, or "all".',
+    ),
+
+  // Dates
   createdAfter: z.string().optional(),
   createdBefore: z.string().optional(),
+  modifiedSince: z.string().optional(),
+
+  // Paging and shaping
   limit: z.number().min(1).max(100).default(50),
   cursor: z.string().optional(),
-  sort: z.enum(["createdAt", "modifiedAt", "number"]).default("createdAt"),
+  sort: z
+    .enum([
+      "createdAt",
+      "modifiedAt",
+      "number",
+      "waitingSince",
+      "customerName",
+      "customerEmail",
+      "mailboxId",
+      "status",
+      "subject",
+    ])
+    .default("createdAt")
+    .describe(
+      "On a multi-status search the ordering applies across the merged window, not globally: each status is paginated independently, so only the fetched rows can be ordered together. Rows whose payload omits the sort field keep a round-robin interleave of the per-status results, so no one status fills the window.",
+    ),
   order: z.enum(["asc", "desc"]).default("desc"),
   fields: z.array(z.string()).optional(),
 };
@@ -63,62 +135,11 @@ export const DraftReplyShape = {
     .describe("The composed reply body to save as a Help Scout draft."),
 };
 
-export const AdvancedConversationSearchShape = {
-  contentTerms: z.array(z.string()).optional(),
-  subjectTerms: z.array(z.string()).optional(),
-  customerEmail: z.string().optional(),
-  emailDomain: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  inboxId: z.string().optional(),
-  status: z.enum(["active", "pending", "closed", "spam"]).optional(),
-  createdAfter: z.string().optional(),
-  createdBefore: z.string().optional(),
-  limit: z.number().min(1).max(100).default(50),
-};
-
-export const ComprehensiveConversationSearchShape = {
-  searchTerms: z.array(z.string()).min(1, "At least one search term is required"),
-  inboxId: z.string().optional(),
-  statuses: z
-    .array(z.enum(["active", "pending", "closed", "spam"]))
-    .default(["active", "pending", "closed"]),
-  searchIn: z.array(z.enum(["body", "subject", "both"])).default(["both"]),
-  timeframeDays: z.number().min(1).max(365).default(60),
-  createdAfter: z.string().optional(),
-  createdBefore: z.string().optional(),
-  limitPerStatus: z.number().min(1).max(100).default(25),
-};
-
-export const StructuredConversationFilterShape = {
-  assignedTo: z.number().int().min(-1).optional().describe("User ID (-1 for unassigned)"),
-  folderId: z.number().int().min(0).optional(),
-  customerIds: z.array(z.number().int().min(0)).max(100).optional(),
-  conversationNumber: z.number().int().min(1).optional(),
-  status: z.enum(["active", "pending", "closed", "spam", "all"]).default("all"),
-  inboxId: z.string().optional(),
-  tag: z.string().optional(),
-  createdAfter: z.string().optional(),
-  createdBefore: z.string().optional(),
-  modifiedSince: z.string().optional(),
-  sortBy: z
-    .enum([
-      "createdAt",
-      "modifiedAt",
-      "number",
-      "waitingSince",
-      "customerName",
-      "customerEmail",
-      "mailboxId",
-      "status",
-      "subject",
-    ])
-    .default("createdAt"),
-  sortOrder: z.enum(["asc", "desc"]).default("desc"),
-  limit: z.number().min(1).max(100).default(50),
-  cursor: z.string().optional(),
-};
-
 export const ListAllInboxesShape = {
+  query: z
+    .string()
+    .default("")
+    .describe('Case-insensitive substring filter on inbox name. Omit or pass "" to list all.'),
   limit: z.number().min(1).max(100).default(100),
 };
 
@@ -257,8 +278,42 @@ export interface Conversation {
   assignee: { id: number; firstName: string; lastName: string; email: string } | null;
   customer: { id: number; firstName: string; lastName: string; email: string };
   mailbox: { id: number; name: string };
+  /**
+   * What the live Mailbox API actually sends for the inbox and the customer.
+   *
+   * The documented conversation payload carries a top-level `mailboxId`
+   * number and a `primaryCustomer` object of `{id, type, first, last,
+   * email}` — not the `mailbox`/`customer` objects modelled above, which the
+   * API never returns on a conversation. Both spellings are kept because the
+   * wrong pair is load-bearing elsewhere (`redactConversationCustomers` keys
+   * on `customer`, and every fixture hand-writes it), so correcting the model
+   * outright is its own change against a live payload.
+   *
+   * Modelling both lets MERGE_SORT_VALUES in ./tools read whichever a payload
+   * supplies, the same way it already handles `customerWaitingSince` vs
+   * `waitingSince` below.
+   */
+  mailboxId?: number;
+  primaryCustomer?: {
+    id?: number;
+    type?: string;
+    first?: string;
+    last?: string;
+    email?: string;
+  };
   tags: Array<{ id: number; name: string; color: string }>;
   threads: number;
+  /**
+   * How long the customer has been waiting. Both spellings are optional
+   * because neither is guaranteed: the documented Mailbox API conversation
+   * payload carries `customerWaitingSince` as an object, and accepts
+   * `waitingSince` only as a `sortField` — no top-level `waitingSince` field
+   * appears in the documented response. Modelling both lets the client-side
+   * merge sort read whichever a payload actually supplies and degrade to
+   * "missing" when it supplies neither. See MERGE_SORT_VALUES in ./tools.
+   */
+  customerWaitingSince?: { time?: string; friendly?: string };
+  waitingSince?: string;
 }
 
 export interface Thread {

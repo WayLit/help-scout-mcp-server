@@ -1,13 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { HelpScoutApiError } from "../helpscout-api";
 import { configureRedaction } from "../redaction";
+import { SearchConversationsShape } from "../schemas";
 import { registerTools } from "../tools";
 
 const EXPECTED_TOOL_NAMES = [
-  "searchInboxes",
   "searchConversations",
   "getConversationSummary",
   "gatherReplyContext",
@@ -16,9 +17,6 @@ const EXPECTED_TOOL_NAMES = [
   "whoami",
   "getServerTime",
   "listAllInboxes",
-  "advancedConversationSearch",
-  "comprehensiveConversationSearch",
-  "structuredConversationFilter",
   "updateConversationStatus",
   "assignConversation",
   "moveConversation",
@@ -65,7 +63,7 @@ beforeEach(() => {
 });
 
 describe("registerTools", () => {
-  it("registers exactly the expected 24 tool names", () => {
+  it("registers exactly the expected 20 tool names", () => {
     const { tools } = setupServer();
     expect(Object.keys(tools).sort()).toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
@@ -120,7 +118,7 @@ describe("getServerTime", () => {
   });
 });
 
-describe("searchInboxes", () => {
+describe("listAllInboxes", () => {
   it("filters discovered inboxes by case-insensitive substring", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue({
@@ -133,27 +131,63 @@ describe("searchInboxes", () => {
       },
     });
 
-    const result = await tools.searchInboxes.handler({ query: "support", limit: 50 }, {});
+    const result = await tools.listAllInboxes.handler({ query: "support", limit: 100 }, {});
     const payload = parseResult(result) as {
-      results: Array<{ id: number; name: string }>;
-      totalFound: number;
+      inboxes: Array<{ id: number; name: string }>;
+      totalInboxes: number;
       totalAvailable: number;
     };
 
-    expect(api.get).toHaveBeenCalledWith("/mailboxes", { page: 1, size: 50 });
-    expect(payload.results.map((r) => r.id)).toEqual([1, 3]);
-    expect(payload.totalFound).toBe(2);
+    expect(api.get).toHaveBeenCalledWith("/mailboxes", { page: 1, size: 100 });
+    expect(payload.inboxes.map((r) => r.id)).toEqual([1, 3]);
+    expect(payload.totalInboxes).toBe(2);
     expect(payload.totalAvailable).toBe(3);
+  });
+
+  it("returns every inbox when query is empty", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue({
+      _embedded: {
+        mailboxes: [
+          { id: 1, name: "Support" },
+          { id: 2, name: "Billing" },
+        ],
+      },
+    });
+
+    const result = await tools.listAllInboxes.handler({ query: "", limit: 100 }, {});
+    const payload = parseResult(result) as { inboxes: unknown[]; totalInboxes: number };
+    expect(payload.inboxes).toHaveLength(2);
+    expect(payload.totalInboxes).toBe(2);
   });
 
   it("returns an empty result set with a helpful hint when nothing matches", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue({ _embedded: { mailboxes: [{ id: 1, name: "Support" }] } });
 
-    const result = await tools.searchInboxes.handler({ query: "nothing", limit: 50 }, {});
-    const payload = parseResult(result) as { results: unknown[]; usage: string };
-    expect(payload.results).toEqual([]);
+    const result = await tools.listAllInboxes.handler({ query: "nothing", limit: 100 }, {});
+    const payload = parseResult(result) as { inboxes: unknown[]; usage: string };
+    expect(payload.inboxes).toEqual([]);
     expect(payload.usage).toMatch(/No inboxes matched/);
+  });
+});
+
+describe("SearchConversationsShape", () => {
+  const schema = z.object(SearchConversationsShape);
+
+  it("accepts a status array and rejects an empty one", () => {
+    expect(schema.safeParse({ status: ["active", "closed"] }).success).toBe(true);
+    expect(schema.safeParse({ status: [] }).success).toBe(false);
+  });
+
+  it("accepts the structured sort fields", () => {
+    expect(schema.safeParse({ sort: "waitingSince" }).success).toBe(true);
+    expect(schema.safeParse({ sort: "customerEmail" }).success).toBe(true);
+  });
+
+  it("accepts tags as an array and rejects a bare string", () => {
+    expect(schema.safeParse({ tags: ["urgent"] }).success).toBe(true);
+    expect(schema.safeParse({ tags: "urgent" }).success).toBe(false);
   });
 });
 
@@ -328,22 +362,15 @@ describe("searchConversations cursor pagination", () => {
   });
 });
 
-describe("structuredConversationFilter cursor pagination", () => {
+describe("searchConversations structural cursor pagination", () => {
   const page = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
 
   it("advances to the requested page for a numeric cursor", async () => {
     const { api, tools } = setupServer();
     api.get.mockResolvedValue(page);
 
-    await tools.structuredConversationFilter.handler(
-      {
-        assignedTo: 1,
-        cursor: "4",
-        status: "all",
-        sortBy: "createdAt",
-        sortOrder: "desc",
-        limit: 50,
-      },
+    await tools.searchConversations.handler(
+      { assignedTo: 1, cursor: "4", status: "all", sort: "createdAt", order: "desc", limit: 50 },
       {},
     );
 
@@ -357,13 +384,13 @@ describe("structuredConversationFilter cursor pagination", () => {
     const nextHref = "https://api.helpscout.net/v2/conversations?page=2&assigned_to=1";
     api.get.mockResolvedValue(page);
 
-    await tools.structuredConversationFilter.handler(
+    await tools.searchConversations.handler(
       {
         assignedTo: 1,
         cursor: nextHref,
         status: "all",
-        sortBy: "createdAt",
-        sortOrder: "desc",
+        sort: "createdAt",
+        order: "desc",
         limit: 50,
       },
       {},
@@ -376,13 +403,32 @@ describe("structuredConversationFilter cursor pagination", () => {
   it("rejects a non-numeric, non-URL cursor", async () => {
     const { tools } = setupServer();
 
-    const result = await tools.structuredConversationFilter.handler(
+    const result = await tools.searchConversations.handler(
       {
         assignedTo: 1,
         cursor: "bogus",
         status: "all",
-        sortBy: "createdAt",
-        sortOrder: "desc",
+        sort: "createdAt",
+        order: "desc",
+        limit: 50,
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+  });
+
+  it("rejects a URL cursor on a multi-status sweep", async () => {
+    const { tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        cursor: "https://api.helpscout.net/v2/conversations?page=2",
+        status: ["active", "closed"],
+        sort: "createdAt",
+        order: "desc",
         limit: 50,
       },
       {},
@@ -1003,7 +1049,7 @@ describe("error handling", () => {
     const { api, tools } = setupServer();
     api.get.mockRejectedValue(new HelpScoutApiError("RATE_LIMIT", "rate limited", 429, 30));
 
-    const result = await tools.searchInboxes.handler({ query: "", limit: 50 }, {});
+    const result = await tools.listAllInboxes.handler({ query: "", limit: 100 }, {});
     expect(result.isError).toBe(true);
 
     const payload = parseResult(result) as {
@@ -1016,7 +1062,7 @@ describe("error handling", () => {
     expect(payload.error).toBe("RATE_LIMIT");
     expect(payload.status).toBe(429);
     expect(payload.retryAfter).toBe(30);
-    expect(payload.tool).toBe("searchInboxes");
+    expect(payload.tool).toBe("listAllInboxes");
     expect(payload.requestId).toBeTruthy();
   });
 
@@ -1024,10 +1070,589 @@ describe("error handling", () => {
     const { api, tools } = setupServer();
     api.get.mockRejectedValue(new Error("boom"));
 
-    const result = await tools.searchInboxes.handler({ query: "", limit: 50 }, {});
+    const result = await tools.listAllInboxes.handler({ query: "", limit: 100 }, {});
     expect(result.isError).toBe(true);
     const payload = parseResult(result) as { error: string; tool: string };
     expect(payload.error).toBeTruthy();
-    expect(payload.tool).toBe("searchInboxes");
+    expect(payload.tool).toBe("listAllInboxes");
+  });
+});
+
+describe("searchConversations merged filters", () => {
+  const emptyPage = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
+
+  function paramsOf(api: ReturnType<typeof fakeApi>, call = 0): Record<string, unknown> {
+    return api.get.mock.calls[call][1] as Record<string, unknown>;
+  }
+
+  it("compiles contentTerms into body query syntax", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { contentTerms: ["refund"], status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(paramsOf(api).query).toBe('(body:"refund")');
+  });
+
+  it("searches both subject and body for searchTerms", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { searchTerms: ["refund"], status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(paramsOf(api).query).toBe('(body:"refund" OR subject:"refund")');
+  });
+
+  it("ANDs a raw query with compiled convenience filters", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      {
+        query: 'tag:"vip"',
+        subjectTerms: ["invoice"],
+        status: "all",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(paramsOf(api).query).toBe('(tag:"vip") AND (subject:"invoice")');
+  });
+
+  it("passes a single tag as the native tag parameter", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { tags: ["urgent"], status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(paramsOf(api).tag).toBe("urgent");
+    expect(paramsOf(api).query).toBeUndefined();
+  });
+
+  it("compiles multiple tags into query syntax instead", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { tags: ["urgent", "vip"], status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(paramsOf(api).tag).toBeUndefined();
+    expect(paramsOf(api).query).toBe('(tag:"urgent" OR tag:"vip")');
+  });
+
+  it("passes structural filters as native request parameters", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      {
+        assignedTo: 7,
+        folderId: 3,
+        conversationNumber: 12345,
+        modifiedSince: "2026-01-01T00:00:00Z",
+        status: "all",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const params = paramsOf(api);
+    expect(params.assigned_to).toBe(7);
+    expect(params.folder).toBe(3);
+    expect(params.number).toBe(12345);
+    expect(params.modifiedSince).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("sweeps every status in a status array and merges the results", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    const result = await tools.searchConversations.handler(
+      {
+        contentTerms: ["bug"],
+        status: ["active", "pending", "closed"],
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const queried = api.get.mock.calls
+      .map((c) => (c[1] as { status?: string } | undefined)?.status)
+      .filter((s): s is string => typeof s === "string");
+    expect(queried.sort()).toEqual(["active", "closed", "pending"]);
+
+    const payload = parseResult(result) as { searchInfo: { statusesSearched: string[] } };
+    expect(payload.searchInfo.statusesSearched.sort()).toEqual([
+      "active",
+      "closed",
+      "pending",
+    ]);
+  });
+
+  it("issues one native request for status:\"all\"", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(paramsOf(api).status).toBe("all");
+  });
+
+  it("echoes the structural filters it applied", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    const result = await tools.searchConversations.handler(
+      { conversationNumber: 999, status: "all", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      searchInfo: { filtersApplied?: { conversationNumber?: number } };
+    };
+    expect(payload.searchInfo.filtersApplied?.conversationNumber).toBe(999);
+  });
+
+  it("accepts the widened sort enum", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { status: "all", limit: 50, sort: "waitingSince", order: "asc" },
+      {},
+    );
+
+    expect(paramsOf(api).sortField).toBe("waitingSince");
+    expect(paramsOf(api).sortOrder).toBe("asc");
+  });
+
+  it("rejects a page-URL cursor for a multi-status array", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: ["active", "closed"],
+        cursor: "https://api.helpscout.net/v2/conversations?page=2",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as { error?: string };
+    expect(result.isError).toBe(true);
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(api.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("searchConversations conversationNumber lookup", () => {
+  const emptyPage = { _embedded: { conversations: [] }, page: { totalElements: 0 } };
+
+  function queriedStatuses(api: ReturnType<typeof fakeApi>): string[] {
+    return api.get.mock.calls
+      .map((c) => (c[1] as { status?: string } | undefined)?.status)
+      .filter((s): s is string => typeof s === "string");
+  }
+
+  it("searches every status when only a conversationNumber is given", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { conversationNumber: 12345, limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(queriedStatuses(api)).toEqual(["all"]);
+  });
+
+  it("lets an explicit status win over the conversationNumber default", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      {
+        conversationNumber: 12345,
+        status: "active",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(queriedStatuses(api)).toEqual(["active"]);
+  });
+
+  it("leaves the active+pending default alone for searches without a conversationNumber", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(emptyPage);
+
+    await tools.searchConversations.handler(
+      { searchTerms: ["refund"], limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(queriedStatuses(api).sort()).toEqual(["active", "pending"]);
+    expect(queriedStatuses(api)).not.toContain("all");
+    expect(queriedStatuses(api)).not.toContain("closed");
+  });
+});
+
+describe("searchConversations merged ordering", () => {
+  function pageOf(conversations: Array<Record<string, unknown>>) {
+    return {
+      _embedded: { conversations },
+      page: { totalElements: conversations.length },
+    };
+  }
+
+  it("orders the merged window by the requested sort field and direction", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, number: 30, createdAt: "2026-01-03T00:00:00Z" }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, number: 10, createdAt: "2026-01-01T00:00:00Z" },
+          { id: 3, number: 20, createdAt: "2026-01-02T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "number", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ number: number }> };
+    expect(payload.results.map((r) => r.number)).toEqual([10, 20, 30]);
+  });
+
+  it("still returns createdAt desc for the default merged search", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, number: 30, createdAt: "2026-01-01T00:00:00Z" }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, number: 10, createdAt: "2026-01-03T00:00:00Z" },
+          { id: 3, number: 20, createdAt: "2026-01-02T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("orders the merged window by customerWaitingSince when the payload carries it", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([{ id: 1, customerWaitingSince: { time: "2026-01-05T00:00:00Z" } }]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, customerWaitingSince: { time: "2026-01-01T00:00:00Z" } },
+          { id: 3, customerWaitingSince: { time: "2026-01-03T00:00:00Z" } },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "waitingSince", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  // The three readers below take their values off the shape Help Scout
+  // actually sends — a top-level `mailboxId` and `primaryCustomer`
+  // `{first, last, email}` — not the `mailbox`/`customer` objects our
+  // Conversation interface models, which no live payload carries. Each
+  // fixture here deliberately omits the modelled spelling, so a reader that
+  // only looked there would find every value missing, separate nothing, and
+  // leave the interleaved [1, 2, 3] order in place.
+  it("orders the merged window by primaryCustomer.email, the live payload field", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, primaryCustomer: { email: "carol@acme.com" } }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, primaryCustomer: { email: "alice@acme.com" } },
+          { id: 3, primaryCustomer: { email: "bob@acme.com" } },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "customerEmail", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("orders the merged window by primaryCustomer first/last, the live payload fields", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, primaryCustomer: { first: "Carol", last: "Ng" } }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, primaryCustomer: { first: "Alice", last: "Ng" } },
+          { id: 3, primaryCustomer: { first: "Bob", last: "Ng" } },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "customerName", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("orders the merged window by the top-level mailboxId, the live payload field", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, mailboxId: 30 }]))
+      .mockResolvedValueOnce(pageOf([{ id: 2, mailboxId: 10 }, { id: 3, mailboxId: 20 }]));
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "mailboxId", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("still reads the modelled mailbox/customer spelling when a payload uses it", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, customer: { email: "carol@acme.com" } }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, customer: { email: "alice@acme.com" } },
+          { id: 3, customer: { email: "bob@acme.com" } },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "customerEmail", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("interleaves the per-status windows when the payload omits the sort field", async () => {
+    const { api, tools } = setupServer();
+    // The documented Mailbox API conversation response has no top-level
+    // `waitingSince` — it carries `customerWaitingSince` instead — so a real
+    // payload can leave the comparator with nothing to separate. When that
+    // happens the merged window must still give every status a share of
+    // `limit`: concatenating would let "active" consume all four slots.
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 1, status: "active", createdAt: "2026-01-01T00:00:00Z" },
+          { id: 2, status: "active", createdAt: "2026-01-02T00:00:00Z" },
+          { id: 3, status: "active", createdAt: "2026-01-03T00:00:00Z" },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 11, status: "pending", createdAt: "2026-01-04T00:00:00Z" },
+          { id: 12, status: "pending", createdAt: "2026-01-05T00:00:00Z" },
+          { id: 13, status: "pending", createdAt: "2026-01-06T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { limit: 4, sort: "waitingSince", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      results: Array<{ id: number; status: string }>;
+    };
+    expect(payload.results.map((r) => r.id)).toEqual([1, 11, 2, 12]);
+    expect(payload.results.filter((r) => r.status === "pending")).toHaveLength(2);
+  });
+
+  it("sorts rows missing the sort value last, in interleaved order", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 1, status: "active" },
+          { id: 2, status: "active" },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 11, status: "pending", customerWaitingSince: { time: "2026-01-09T00:00:00Z" } },
+          { id: 12, status: "pending" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "waitingSince", order: "desc" },
+      {},
+    );
+
+    // 11 is the only row with a waiting timestamp, so it leads; the rest keep
+    // their interleaved order ([1, 11, 2, 12] with 11 lifted out).
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([11, 1, 2, 12]);
+  });
+});
+
+describe("searchConversations createdBefore filtering", () => {
+  function pageOf(conversations: Array<Record<string, unknown>>, totalElements?: number) {
+    return {
+      _embedded: { conversations },
+      page: {
+        number: 0,
+        size: 50,
+        totalElements: totalElements ?? conversations.length,
+        totalPages: 1,
+      },
+    };
+  }
+
+  it("rebuilds single-status pagination so totalResults matches the returned rows", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(
+      pageOf([
+        { id: 1, number: 1, createdAt: "2026-01-01T00:00:00Z" },
+        { id: 2, number: 2, createdAt: "2026-01-05T00:00:00Z" },
+        { id: 3, number: 3, createdAt: "2026-03-01T00:00:00Z" },
+      ]),
+    );
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "closed",
+        createdBefore: "2026-02-01",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      results: Array<{ id: number }>;
+      pagination: { totalResults: number; totalAvailable: number; note: string };
+    };
+    expect(payload.results.map((r) => r.id)).toEqual([1, 2]);
+    expect(payload.pagination.totalResults).toBe(payload.results.length);
+    expect(payload.pagination.totalAvailable).toBe(3);
+    expect(payload.pagination.note).toMatch(/createdBefore/);
+  });
+
+  it("rebuilds merged multi-status pagination so totalResults matches the returned rows", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 1, createdAt: "2026-01-01T00:00:00Z" },
+          { id: 2, createdAt: "2026-03-01T00:00:00Z" },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 3, createdAt: "2026-01-02T00:00:00Z" },
+          { id: 4, createdAt: "2026-03-02T00:00:00Z" },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: ["active", "pending"],
+        createdBefore: "2026-02-01",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      results: Array<{ id: number }>;
+      pagination: {
+        totalResults: number;
+        totalAvailable: number;
+        totalByStatus: Record<string, number>;
+        note: string;
+      };
+    };
+    expect(payload.results.map((r) => r.id)).toEqual([3, 1]);
+    expect(payload.pagination.totalResults).toBe(payload.results.length);
+    // The pre-filter API totals survive the rebuild.
+    expect(payload.pagination.totalAvailable).toBe(4);
+    expect(payload.pagination.totalByStatus).toEqual({ active: 2, pending: 2 });
+    expect(payload.pagination.note).toMatch(/createdBefore/);
+  });
+
+  it("leaves the API page object in place when createdBefore removes nothing", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(pageOf([{ id: 1, createdAt: "2026-01-01T00:00:00Z" }]));
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "closed",
+        createdBefore: "2026-02-01",
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      results: unknown[];
+      pagination: { totalElements: number };
+    };
+    expect(payload.results).toHaveLength(1);
+    expect(payload.pagination).toEqual({
+      number: 0,
+      size: 50,
+      totalElements: 1,
+      totalPages: 1,
+    });
   });
 });

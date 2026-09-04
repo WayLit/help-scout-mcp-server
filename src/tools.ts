@@ -31,9 +31,12 @@ import {
   redactThreads,
 } from "./redaction";
 import {
-  AdvancedConversationSearchShape,
+  buildConversationQuery,
+  combineQueries,
+  resolveStatusPlan,
+} from "./conversation-query";
+import {
   AssignConversationShape,
-  ComprehensiveConversationSearchShape,
   Conversation,
   CreateDraftConversationShape,
   Customer,
@@ -55,17 +58,12 @@ import {
   Organization,
   SearchConversationsShape,
   SearchCustomersByEmailShape,
-  SearchInboxesShape,
-  StructuredConversationFilterShape,
   Thread,
   UpdateConversationStatusShape,
   User,
 } from "./schemas";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-const DEFAULT_SORT_FIELD = "createdAt";
-const DEFAULT_SORT_ORDER = "desc";
 
 function textResult(payload: unknown): CallToolResult {
   return {
@@ -134,11 +132,6 @@ function errorResult(
     ],
     isError: true,
   };
-}
-
-/** Escape Help Scout query syntax to prevent injection. */
-function escapeQueryTerm(term: string): string {
-  return term.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 /** Append a createdAt date range to an existing Help Scout query. */
@@ -238,26 +231,107 @@ function buildFilteredPagination(
   };
 }
 
-function calculateTimeRange(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+/**
+ * How each `sort` value is read off a conversation client-side. Date fields are
+ * parsed to epoch millis so they compare chronologically rather than
+ * lexically; everything else compares as a number or via localeCompare.
+ *
+ * Every reader here is best-effort: a payload that omits the field yields a
+ * missing value, which `isMissingSortValue` sorts last rather than throwing.
+ * `waitingSince` is the clearest case — Help Scout accepts it as a `sortField`
+ * but the documented conversation response carries `customerWaitingSince` as
+ * an object instead, so we read that first and fall back to a bare
+ * `waitingSince` if a payload happens to supply one.
+ *
+ * `mailboxId`, `customerName`, and `customerEmail` read the live payload the
+ * same way. The API sends a top-level `mailboxId` and a `primaryCustomer` of
+ * `{first, last, email}`; our `Conversation` models `mailbox`/`customer`
+ * instead, a mismatch that predates this file (see the note on those fields in
+ * ../schemas). Reading the live spelling first and the modelled one second
+ * means these three sorts work against Help Scout *and* against the fixtures,
+ * without touching the shape `redactConversationCustomers` depends on. If they
+ * only read the modelled spelling every value would be missing, the comparator
+ * would separate nothing, and the merge would silently fall back to the
+ * round-robin order for three of its nine sort values.
+ */
+const MERGE_SORT_VALUES: Record<
+  string,
+  (c: Conversation) => number | string | undefined
+> = {
+  createdAt: (c) => Date.parse(c.createdAt),
+  modifiedAt: (c) => Date.parse(c.updatedAt),
+  number: (c) => c.number,
+  waitingSince: (c) => Date.parse(c.customerWaitingSince?.time ?? c.waitingSince ?? ""),
+  mailboxId: (c) => c.mailboxId ?? c.mailbox?.id,
+  customerName: (c) =>
+    `${c.primaryCustomer?.first ?? c.customer?.firstName ?? ""} ${c.primaryCustomer?.last ?? c.customer?.lastName ?? ""}`.trim(),
+  customerEmail: (c) => c.primaryCustomer?.email ?? c.customer?.email,
+  status: (c) => c.status,
+  subject: (c) => c.subject,
+};
+
+function isMissingSortValue(value: number | string | undefined): boolean {
+  if (value === undefined || value === "") return true;
+  return typeof value === "number" && Number.isNaN(value);
 }
 
-function buildSearchQuery(terms: string[], searchIn: string[]): string {
-  const queries: string[] = [];
-  for (const term of terms) {
-    const escaped = escapeQueryTerm(term);
-    const parts: string[] = [];
-    if (searchIn.includes("body") || searchIn.includes("both")) {
-      parts.push(`body:"${escaped}"`);
+/**
+ * Round-robin the per-status windows into one list: the first row of each
+ * status, then the second of each, and so on.
+ *
+ * This is the base order for the merge, and it is what survives when the sort
+ * field cannot be compared client-side. Concatenating instead would let the
+ * first status consume the whole `limit` on truncation — a default
+ * `searchConversations({ sort: "waitingSince", limit: 50 })` fans out to
+ * active+pending, and 50 active rows followed by 50 pending rows truncates to
+ * 50 active and 0 pending. Each per-status list already arrives sorted
+ * server-side by the requested `sortField`, so round-robin keeps that order
+ * within a status while giving every status a proportional share of the
+ * window.
+ */
+function interleaveByStatus(byStatus: Conversation[][]): Conversation[] {
+  const out: Conversation[] = [];
+  const longest = Math.max(0, ...byStatus.map((list) => list.length));
+  for (let i = 0; i < longest; i++) {
+    for (const list of byStatus) {
+      const conversation = list[i];
+      if (conversation !== undefined) out.push(conversation);
     }
-    if (searchIn.includes("subject") || searchIn.includes("both")) {
-      parts.push(`subject:"${escaped}"`);
-    }
-    if (parts.length > 0) queries.push(`(${parts.join(" OR ")})`);
   }
-  return queries.join(" OR ");
+  return out;
+}
+
+/**
+ * Order the merged multi-status window by the caller's `sort`/`order`.
+ *
+ * Each per-status request is already sorted by the API, but the merge combines
+ * several of them, so the result has to be re-ordered. The per-status lists are
+ * interleaved first and the comparator is then applied on top of that base:
+ * `Array.prototype.sort` is stable, so rows the comparator cannot separate —
+ * a sort field the payload omits entirely, or one with no client-side reader at
+ * all — keep the interleaved order instead of collapsing back to
+ * status-concatenation order and biasing the truncated window toward whichever
+ * status was fetched first. A conversation missing the sort value sorts last in
+ * either direction.
+ */
+function sortMergedConversations(
+  byStatus: Conversation[][],
+  sort: string,
+  order: string,
+): Conversation[] {
+  const interleaved = interleaveByStatus(byStatus);
+  const readValue = MERGE_SORT_VALUES[sort];
+  if (!readValue) return interleaved;
+  const direction = order === "asc" ? 1 : -1;
+  return interleaved.sort((a, b) => {
+    const av = readValue(a);
+    const bv = readValue(b);
+    const aMissing = isMissingSortValue(av);
+    const bMissing = isMissingSortValue(bv);
+    if (aMissing || bMissing) return aMissing === bMissing ? 0 : aMissing ? 1 : -1;
+    if (typeof av === "number" && typeof bv === "number") return direction * (av - bv);
+    return direction * String(av).localeCompare(String(bv));
+  });
 }
 
 /** Pick the first customer message and latest staff reply from a thread list. */
@@ -277,55 +351,26 @@ function pickFirstAndLast(threads: Thread[]): {
 // ── Tool registration ──────────────────────────────────────────────────────
 
 export function registerTools(server: McpServer, api: HelpScoutAPI): void {
-  // ── searchInboxes ────────────────────────────────────────────────────
-  server.tool(
-    "searchInboxes",
-    "List or search inboxes by name. Use empty string to list all.",
-    SearchInboxesShape,
-    async (input): Promise<CallToolResult> => {
-      try {
-        const response = await api.get<PaginatedResponse<Inbox>>("/mailboxes", {
-          page: 1,
-          size: input.limit,
-        });
-        const inboxes = response._embedded?.mailboxes || [];
-        const filtered = inboxes.filter((i) =>
-          i.name.toLowerCase().includes(input.query.toLowerCase()),
-        );
-        return textResult({
-          results: filtered.map((i) => ({
-            id: i.id,
-            name: i.name,
-            email: i.email,
-            createdAt: i.createdAt,
-            updatedAt: i.updatedAt,
-          })),
-          query: input.query,
-          totalFound: filtered.length,
-          totalAvailable: inboxes.length,
-          usage:
-            filtered.length > 0
-              ? 'Use the "id" field with conversation search tools.'
-              : 'No inboxes matched. Try "" to list all.',
-        });
-      } catch (err) {
-        return errorResult(err, "searchInboxes", api.userEmail);
-      }
-    },
-  );
-
   // ── searchConversations ──────────────────────────────────────────────
   server.tool(
     "searchConversations",
-    "List conversations by status, date, inbox, or tag. Searches active+pending in parallel by default; pass status:\"closed\" to search closed tickets. For keyword search use comprehensiveConversationSearch.",
+    "Search and list conversations. Filter by status, date, inbox, or tags; search content with searchTerms (subject or body), or narrow to one field with contentTerms/subjectTerms; look up by customerEmail, emailDomain, customerIds, assignedTo, folderId, or conversationNumber. Searches active+pending in parallel by default — pass status:\"closed\", a status array, or \"all\" to widen; a conversationNumber lookup searches every status.",
     SearchConversationsShape,
     async (input): Promise<CallToolResult> => {
       try {
         const { page: cursorPage, url: cursorUrl } = resolveCursorPage(input.cursor);
-        if (cursorUrl && !input.status) {
+        // A lookup by unique identifier is not a "what's open right now" browse,
+        // so the closed-excluded default doesn't apply to it: a bare
+        // conversationNumber searches every status, because people look up old
+        // ticket numbers precisely when those tickets are resolved. An explicit
+        // `status` from the caller always wins.
+        const statusInput =
+          input.status ?? (input.conversationNumber !== undefined ? "all" : undefined);
+        const plan = resolveStatusPlan(statusInput);
+        if (cursorUrl && plan.mode === "multi") {
           throw new HelpScoutApiError(
             "INVALID_INPUT",
-            "A page-URL cursor requires `status` to be set — the default multi-status search merges two independently-paginated requests and can't resume from a single URL. Pass a plain page number instead, or set `status`.",
+            "A page-URL cursor requires a single `status` — a multi-status search merges independently-paginated requests and can't resume from a single URL. Pass a plain page number instead, or set one `status`.",
           );
         }
 
@@ -335,39 +380,48 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           sortField: input.sort,
           sortOrder: input.order,
         };
-        if (input.query) baseParams.query = input.query;
-        if (input.inboxId) baseParams.mailbox = input.inboxId;
-        if (input.tag) baseParams.tag = input.tag;
+
+        // Convenience filters compile to query syntax and AND onto any raw query.
+        const compiled = buildConversationQuery(input);
+        const combined = combineQueries(input.query, compiled);
 
         // NOTE: Only createdAfter goes into the query — createdBefore is
         // applied client-side below. This matches the stdio server behavior;
         // Help Scout's query syntax does not reliably honor a date upper bound.
-        const queryWithDate = appendCreatedAtFilter(
-          baseParams.query as string | undefined,
-          input.createdAfter,
-        );
+        const queryWithDate = appendCreatedAtFilter(combined, input.createdAfter);
         if (queryWithDate) baseParams.query = queryWithDate;
+
+        if (input.inboxId) baseParams.mailbox = input.inboxId;
+        // A single tag uses Help Scout's native filter; several were already
+        // compiled into an OR group by buildConversationQuery above.
+        if (input.tags?.length === 1) baseParams.tag = input.tags[0];
+        if (input.assignedTo !== undefined) baseParams.assigned_to = input.assignedTo;
+        if (input.folderId !== undefined) baseParams.folder = input.folderId;
+        if (input.conversationNumber !== undefined) {
+          baseParams.number = input.conversationNumber;
+        }
+        if (input.modifiedSince) baseParams.modifiedSince = input.modifiedSince;
 
         let conversations: Conversation[] = [];
         let searchedStatuses: string[];
         let pagination: unknown;
         let nextCursor: string | undefined;
 
-        if (input.status) {
+        if (plan.mode === "single") {
           const response = cursorUrl
             ? await api.get<PaginatedResponse<Conversation>>(cursorUrl)
             : await api.get<PaginatedResponse<Conversation>>("/conversations", {
                 ...baseParams,
-                status: input.status,
+                status: plan.status,
               });
           conversations = response._embedded?.conversations || [];
-          searchedStatuses = [input.status];
+          searchedStatuses = [plan.status];
           pagination = response.page;
           nextCursor = response._links?.next?.href;
         } else {
-          // Default excludes "closed" — closed tickets are usually noise for
-          // "what's open right now" queries. Pass status:"closed" to search it.
-          const statuses = ["active", "pending"] as const;
+          // Which statuses land here is decided by resolveStatusPlan; the
+          // default deliberately excludes "closed".
+          const statuses = plan.statuses;
           searchedStatuses = [...statuses];
           const results = await Promise.allSettled(
             statuses.map((status) =>
@@ -379,6 +433,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           );
 
           const seen = new Set<number>();
+          // Kept per status rather than flattened as we go: the merge below
+          // needs the grouping to interleave the windows fairly.
+          const byStatus: Conversation[][] = [];
           const failed: Array<{ status: string; message: string; code: string }> = [];
           const totalByStatus: Record<string, number> = {};
           let totalAvailable = 0;
@@ -393,12 +450,14 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
               if ((r.value.page?.number ?? 0) + 1 < (r.value.page?.totalPages ?? 0)) {
                 hasMorePages = true;
               }
+              const statusWindow: Conversation[] = [];
               for (const c of r.value._embedded?.conversations || []) {
                 if (!seen.has(c.id)) {
                   seen.add(c.id);
-                  conversations.push(c);
+                  statusWindow.push(c);
                 }
               }
+              byStatus.push(statusWindow);
             } else {
               const reason = r.reason;
               if (!isHelpScoutApiError(reason)) throw reason;
@@ -418,9 +477,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
               (s) => !failed.some((f) => f.status === s),
             );
           }
-          conversations.sort(
-            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-          );
+          // The merge combines independently-sorted pages, so re-apply the
+          // caller's sort across the merged window before truncating to limit.
+          conversations = sortMergedConversations(byStatus, input.sort, input.order);
           if (conversations.length > input.limit) {
             conversations = conversations.slice(0, input.limit);
           }
@@ -451,7 +510,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           conversations = r.filtered;
           clientSideFiltered = r.wasFiltered;
           if (clientSideFiltered) {
-            if (input.status) {
+            if (plan.mode === "single") {
               // Single-status: pagination is Help Scout's `page` object
               pagination = buildFilteredPagination(
                 conversations.length,
@@ -497,9 +556,22 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           pagination,
           nextCursor,
           searchInfo: {
-            query: input.query,
+            query: queryWithDate,
             statusesSearched: searchedStatuses,
             inboxScope: formatInboxScope(input.inboxId),
+            filtersApplied: {
+              searchTerms: input.searchTerms,
+              contentTerms: input.contentTerms,
+              subjectTerms: input.subjectTerms,
+              customerEmail: input.customerEmail,
+              emailDomain: input.emailDomain,
+              customerIds: input.customerIds,
+              assignedTo: input.assignedTo,
+              folderId: input.folderId,
+              conversationNumber: input.conversationNumber,
+              tags: input.tags,
+              modifiedSince: input.modifiedSince,
+            },
             clientSideFiltering: clientSideFiltered
               ? "createdBefore applied after API fetch"
               : undefined,
@@ -750,7 +822,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
   // ── whoami ───────────────────────────────────────────────────────────
   server.tool(
     "whoami",
-    "Get the authenticated Help Scout user (id, name, email, role). Use the returned id as assignedTo in structuredConversationFilter to find your own conversations.",
+    "Get the authenticated Help Scout user (id, name, email, role). Use the returned id as assignedTo in searchConversations to find your own conversations.",
     {},
     async (): Promise<CallToolResult> => {
       try {
@@ -767,7 +839,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           },
           accessEmail: api.userEmail,
           usage:
-            "Pass user.id as assignedTo in structuredConversationFilter to list conversations assigned to you.",
+            "Pass user.id as assignedTo in searchConversations to list conversations assigned to you.",
         });
       } catch (err) {
         return errorResult(err, "whoami", api.userEmail);
@@ -792,7 +864,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
   // ── listAllInboxes ───────────────────────────────────────────────────
   server.tool(
     "listAllInboxes",
-    "List all inboxes with IDs.",
+    'List inboxes with their IDs, optionally filtered by a name substring. Omit query (or pass "") to list all.',
     ListAllInboxesShape,
     async (input): Promise<CallToolResult> => {
       try {
@@ -800,7 +872,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           page: 1,
           size: input.limit,
         });
-        const inboxes = response._embedded?.mailboxes || [];
+        const all = response._embedded?.mailboxes || [];
+        const needle = input.query.toLowerCase();
+        const inboxes = needle ? all.filter((i) => i.name.toLowerCase().includes(needle)) : all;
         return textResult({
           inboxes: inboxes.map((i) => ({
             id: i.id,
@@ -810,298 +884,15 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             updatedAt: i.updatedAt,
           })),
           totalInboxes: inboxes.length,
+          totalAvailable: all.length,
+          query: input.query || undefined,
           usage:
-            'Use the "id" field from these results with conversation search tools.',
+            inboxes.length > 0
+              ? 'Use the "id" field from these results with conversation search tools.'
+              : 'No inboxes matched. Omit `query` (or pass "") to list all.',
         });
       } catch (err) {
         return errorResult(err, "listAllInboxes", api.userEmail);
-      }
-    },
-  );
-
-  // ── advancedConversationSearch ───────────────────────────────────────
-  server.tool(
-    "advancedConversationSearch",
-    "Filter conversations by email domain, customer email, or multiple tags.",
-    AdvancedConversationSearchShape,
-    async (input): Promise<CallToolResult> => {
-      try {
-        const parts: string[] = [];
-        if (input.contentTerms?.length) {
-          parts.push(
-            `(${input.contentTerms.map((t) => `body:"${escapeQueryTerm(t)}"`).join(" OR ")})`,
-          );
-        }
-        if (input.subjectTerms?.length) {
-          parts.push(
-            `(${input.subjectTerms.map((t) => `subject:"${escapeQueryTerm(t)}"`).join(" OR ")})`,
-          );
-        }
-        if (input.customerEmail) {
-          parts.push(`email:"${escapeQueryTerm(input.customerEmail)}"`);
-        }
-        if (input.emailDomain) {
-          parts.push(`email:"${escapeQueryTerm(input.emailDomain.replace("@", ""))}"`);
-        }
-        if (input.tags?.length) {
-          parts.push(
-            `(${input.tags.map((t) => `tag:"${escapeQueryTerm(t)}"`).join(" OR ")})`,
-          );
-        }
-        const queryString = parts.length > 0 ? parts.join(" AND ") : undefined;
-
-        const queryParams: Record<string, unknown> = {
-          page: 1,
-          size: input.limit,
-          sortField: "createdAt",
-          sortOrder: "desc",
-          status: input.status || "all",
-        };
-        if (queryString) queryParams.query = queryString;
-        if (input.inboxId) queryParams.mailbox = input.inboxId;
-
-        // createdBefore is applied client-side (matches stdio behavior).
-        const withDate = appendCreatedAtFilter(
-          queryParams.query as string | undefined,
-          input.createdAfter,
-        );
-        if (withDate) queryParams.query = withDate;
-
-        const response = await api.get<PaginatedResponse<Conversation>>(
-          "/conversations",
-          queryParams,
-        );
-        let conversations = response._embedded?.conversations || [];
-        let clientSideFiltered = false;
-        const originalCount = conversations.length;
-        if (input.createdBefore) {
-          const r = applyCreatedBeforeFilter(conversations, input.createdBefore);
-          conversations = r.filtered;
-          clientSideFiltered = r.wasFiltered;
-        }
-
-        return textResult({
-          results: await redactConversationList(conversations),
-          searchQuery: queryString,
-          inboxScope: formatInboxScope(input.inboxId),
-          searchCriteria: {
-            contentTerms: input.contentTerms,
-            subjectTerms: input.subjectTerms,
-            customerEmail: input.customerEmail,
-            emailDomain: input.emailDomain,
-            tags: input.tags,
-          },
-          pagination: buildFilteredPagination(
-            conversations.length,
-            response.page,
-            clientSideFiltered,
-          ),
-          nextCursor: response._links?.next?.href,
-          clientSideFiltering: clientSideFiltered
-            ? `createdBefore removed ${originalCount - conversations.length} of ${originalCount} results`
-            : undefined,
-        });
-      } catch (err) {
-        return errorResult(err, "advancedConversationSearch", api.userEmail);
-      }
-    },
-  );
-
-  // ── comprehensiveConversationSearch ──────────────────────────────────
-  server.tool(
-    "comprehensiveConversationSearch",
-    "Search conversation content by keywords across subject and body. Multi-status parallel search.",
-    ComprehensiveConversationSearchShape,
-    async (input): Promise<CallToolResult> => {
-      try {
-        const createdAfter = input.createdAfter || calculateTimeRange(input.timeframeDays);
-        const searchQuery = buildSearchQuery(input.searchTerms, input.searchIn);
-
-        interface StatusResult {
-          status: string;
-          totalCount: number;
-          totalCountBeforeFilter?: number;
-          conversations: Conversation[];
-          searchQuery: string;
-          filteredByCreatedBefore?: boolean;
-          error?: string;
-        }
-
-        const allResults: StatusResult[] = [];
-        for (const status of input.statuses) {
-          try {
-            const withDate = appendCreatedAtFilter(searchQuery, createdAfter);
-            const params: Record<string, unknown> = {
-              page: 1,
-              size: input.limitPerStatus,
-              sortField: DEFAULT_SORT_FIELD,
-              sortOrder: DEFAULT_SORT_ORDER,
-              query: withDate || searchQuery,
-              status,
-            };
-            if (input.inboxId) params.mailbox = input.inboxId;
-
-            const response = await api.get<PaginatedResponse<Conversation>>(
-              "/conversations",
-              params,
-            );
-            let convs = response._embedded?.conversations || [];
-            const apiTotal = response.page?.totalElements || convs.length;
-            let filteredByDate = false;
-            if (input.createdBefore) {
-              const r = applyCreatedBeforeFilter(convs, input.createdBefore);
-              convs = r.filtered;
-              filteredByDate = r.wasFiltered;
-            }
-            allResults.push({
-              status,
-              totalCount: filteredByDate ? convs.length : apiTotal,
-              totalCountBeforeFilter: filteredByDate ? apiTotal : undefined,
-              conversations: convs,
-              searchQuery,
-              filteredByCreatedBefore: filteredByDate,
-            });
-          } catch (err) {
-            if (!isHelpScoutApiError(err)) throw err;
-            if (err.code === "UNAUTHORIZED" || err.code === "INVALID_INPUT") throw err;
-            allResults.push({
-              status,
-              totalCount: 0,
-              conversations: [],
-              searchQuery,
-              error: `Search failed (${err.code}): ${err.message}`,
-            });
-          }
-        }
-
-        const totalConversations = allResults.reduce(
-          (sum, r) => sum + r.conversations.length,
-          0,
-        );
-        const totalAvailable = allResults.reduce((sum, r) => sum + r.totalCount, 0);
-        const hasClientSideFiltering = allResults.some((r) => r.filteredByCreatedBefore);
-        const totalBeforeFilter = hasClientSideFiltering
-          ? allResults.reduce(
-              (sum, r) => sum + (r.totalCountBeforeFilter || r.totalCount),
-              0,
-            )
-          : undefined;
-
-        return textResult({
-          searchTerms: input.searchTerms,
-          searchQuery,
-          searchIn: input.searchIn,
-          inboxScope: formatInboxScope(input.inboxId),
-          timeframe: {
-            createdAfter,
-            createdBefore: input.createdBefore,
-            days: input.timeframeDays,
-          },
-          totalConversationsFound: totalConversations,
-          totalAvailableAcrossStatuses: totalAvailable,
-          totalBeforeClientSideFiltering: totalBeforeFilter,
-          clientSideFilteringApplied: hasClientSideFiltering
-            ? `createdBefore applied. totalConversationsFound=${totalConversations}, totalBeforeClientSideFiltering=${totalBeforeFilter}`
-            : undefined,
-          failedStatuses: allResults
-            .filter((r) => r.error)
-            .map((r) => `[WARNING] Status "${r.status}": ${r.error}`),
-          resultsByStatus: await Promise.all(
-            allResults.map(async (r) => ({
-              ...r,
-              conversations: await redactConversationList(r.conversations),
-            })),
-          ),
-        });
-      } catch (err) {
-        return errorResult(err, "comprehensiveConversationSearch", api.userEmail);
-      }
-    },
-  );
-
-  // ── structuredConversationFilter ─────────────────────────────────────
-  server.tool(
-    "structuredConversationFilter",
-    "Lookup by ticket number or filter by assignee/customer/folder IDs. Must use at least one unique field.",
-    StructuredConversationFilterShape,
-    async (input): Promise<CallToolResult> => {
-      try {
-        // Enforce .refine() rule from stdio server
-        const uniqueSorts = ["waitingSince", "customerName", "customerEmail"];
-        const hasUniqueField =
-          input.assignedTo !== undefined ||
-          input.folderId !== undefined ||
-          input.customerIds !== undefined ||
-          input.conversationNumber !== undefined ||
-          uniqueSorts.includes(input.sortBy);
-        if (!hasUniqueField) {
-          throw new HelpScoutApiError(
-            "INVALID_INPUT",
-            "Must use at least one unique field: assignedTo, folderId, customerIds, conversationNumber, or unique sorting (waitingSince/customerName/customerEmail). For content search, use comprehensiveConversationSearch.",
-          );
-        }
-
-        const { page: cursorPage, url: cursorUrl } = resolveCursorPage(input.cursor);
-
-        const queryParams: Record<string, unknown> = {
-          page: cursorPage ?? 1,
-          size: input.limit,
-          sortField: input.sortBy,
-          sortOrder: input.sortOrder,
-        };
-        if (input.assignedTo !== undefined) queryParams.assigned_to = input.assignedTo;
-        if (input.folderId !== undefined) queryParams.folder = input.folderId;
-        if (input.conversationNumber !== undefined)
-          queryParams.number = input.conversationNumber;
-        if (input.customerIds && input.customerIds.length > 0) {
-          queryParams.query = `(${input.customerIds.map((id) => `customerIds:${id}`).join(" OR ")})`;
-        }
-        if (input.inboxId) queryParams.mailbox = input.inboxId;
-        queryParams.status = input.status;
-        if (input.tag) queryParams.tag = input.tag;
-        if (input.modifiedSince) queryParams.modifiedSince = input.modifiedSince;
-
-        const withDate = appendCreatedAtFilter(
-          queryParams.query as string | undefined,
-          input.createdAfter,
-        );
-        if (withDate) queryParams.query = withDate;
-
-        const response = cursorUrl
-          ? await api.get<PaginatedResponse<Conversation>>(cursorUrl)
-          : await api.get<PaginatedResponse<Conversation>>("/conversations", queryParams);
-        let conversations = response._embedded?.conversations || [];
-        let clientSideFiltered = false;
-        const originalCount = conversations.length;
-        if (input.createdBefore) {
-          const r = applyCreatedBeforeFilter(conversations, input.createdBefore);
-          conversations = r.filtered;
-          clientSideFiltered = r.wasFiltered;
-        }
-
-        return textResult({
-          results: await redactConversationList(conversations),
-          filterApplied: {
-            filterType: "structural",
-            assignedTo: input.assignedTo,
-            folderId: input.folderId,
-            customerIds: input.customerIds,
-            conversationNumber: input.conversationNumber,
-            uniqueSorting: uniqueSorts.includes(input.sortBy) ? input.sortBy : undefined,
-          },
-          inboxScope: formatInboxScope(input.inboxId),
-          pagination: buildFilteredPagination(
-            conversations.length,
-            response.page,
-            clientSideFiltered,
-          ),
-          nextCursor: response._links?.next?.href,
-          clientSideFiltering: clientSideFiltered
-            ? `createdBefore removed ${originalCount - conversations.length} of ${originalCount}`
-            : undefined,
-        });
-      } catch (err) {
-        return errorResult(err, "structuredConversationFilter", api.userEmail);
       }
     },
   );
@@ -1285,7 +1076,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         return textResult({
           customer: result,
           usage:
-            "NEXT STEPS: Use organizationId with getOrganization. Use customer.id with structuredConversationFilter(customerIds).",
+            "NEXT STEPS: Use organizationId with getOrganization. Use customer.id with searchConversations(customerIds).",
         });
       } catch (err) {
         return errorResult(err, "getCustomer", api.userEmail);
@@ -1332,7 +1123,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           returnedCount: customers.length,
           pagination: response.page,
           usage:
-            "Use customer.id with getCustomer for full profile or structuredConversationFilter(customerIds).",
+            "Use customer.id with getCustomer for full profile or searchConversations(customerIds).",
         });
       } catch (err) {
         return errorResult(err, "listCustomers", api.userEmail);
@@ -1560,7 +1351,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             ? (response.page?.number ?? 0) + 1
             : undefined,
           usage:
-            "Use customer.id with getCustomer or structuredConversationFilter(customerIds).",
+            "Use customer.id with getCustomer or searchConversations(customerIds).",
         });
       } catch (err) {
         return errorResult(err, "getOrganizationMembers", api.userEmail);
