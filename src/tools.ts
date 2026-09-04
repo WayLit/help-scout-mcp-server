@@ -31,8 +31,13 @@ import {
   redactThreadBodies,
 } from "./redaction";
 import {
+  type StatusPosition,
+  type StatusPositions,
   buildConversationQuery,
   combineQueries,
+  encodeMergedCursor,
+  isMergedCursor,
+  parseMergedCursor,
   resolveStatusPlan,
 } from "./conversation-query";
 import {
@@ -178,13 +183,29 @@ function formatInboxScope(inboxId?: string): string {
 }
 
 /**
- * Resolve a `cursor` input for `/conversations` pagination. Accepts either a
- * plain page number (e.g. "2") or the full page URL previously returned as
- * `nextCursor` (a Help Scout `_links.next.href`). Without this, `page`
- * silently stayed hardcoded at 1 regardless of what was passed as cursor.
+ * Resolve a `cursor` input for `/conversations` pagination. Accepts three
+ * forms: the opaque merged cursor a multi-status sweep hands back, which
+ * carries one resume position per status; a plain page number (e.g. "2"); or
+ * the full page URL previously returned as `nextCursor` (a Help Scout
+ * `_links.next.href`). Without this, `page` silently stayed hardcoded at 1
+ * regardless of what was passed as cursor.
  */
-function resolveCursorPage(cursor: string | undefined): { page?: number; url?: string } {
+function resolveCursor(cursor: string | undefined): {
+  page?: number;
+  url?: string;
+  positions?: StatusPositions;
+} {
   if (!cursor) return {};
+  if (isMergedCursor(cursor)) {
+    const positions = parseMergedCursor(cursor);
+    if (!positions) {
+      throw new HelpScoutApiError(
+        "INVALID_INPUT",
+        `Invalid cursor: "${cursor}". A merged multi-status cursor is opaque — pass the previous response's nextCursor back unchanged.`,
+      );
+    }
+    return { positions };
+  }
   if (/^https?:\/\//.test(cursor)) {
     // The resolved URL is fetched with the caller's Help Scout OAuth token
     // attached (see HelpScoutAPI.get) — validate host/scheme/path exactly
@@ -212,7 +233,7 @@ function resolveCursorPage(cursor: string | undefined): { page?: number; url?: s
   if (!Number.isInteger(page) || page < 1) {
     throw new HelpScoutApiError(
       "INVALID_INPUT",
-      `Invalid cursor: "${cursor}". Expected a page number (e.g. "2") or the full URL from a previous response's nextCursor.`,
+      `Invalid cursor: "${cursor}". Expected a page number (e.g. "2") or a previous response's nextCursor, passed back unchanged.`,
     );
   }
   return { page };
@@ -276,6 +297,21 @@ function isMissingSortValue(value: number | string | undefined): boolean {
 }
 
 /**
+ * One fetched row plus where it came from: which status window it belongs to,
+ * and its index within that status's upstream page.
+ *
+ * The index is the whole point. A merged sweep truncates the combined window
+ * to `limit`, and without knowing which upstream rows that window actually
+ * reached, the next page can only guess — which is how every status used to
+ * advance a full page and leave the untruncated remainder unreachable.
+ */
+interface MergeRow {
+  conversation: Conversation;
+  status: string;
+  index: number;
+}
+
+/**
  * Round-robin the per-status windows into one list: the first row of each
  * status, then the second of each, and so on.
  *
@@ -289,13 +325,13 @@ function isMissingSortValue(value: number | string | undefined): boolean {
  * within a status while giving every status a proportional share of the
  * window.
  */
-function interleaveByStatus(byStatus: Conversation[][]): Conversation[] {
-  const out: Conversation[] = [];
+function interleaveByStatus(byStatus: MergeRow[][]): MergeRow[] {
+  const out: MergeRow[] = [];
   const longest = Math.max(0, ...byStatus.map((list) => list.length));
   for (let i = 0; i < longest; i++) {
     for (const list of byStatus) {
-      const conversation = list[i];
-      if (conversation !== undefined) out.push(conversation);
+      const row = list[i];
+      if (row !== undefined) out.push(row);
     }
   }
   return out;
@@ -314,18 +350,14 @@ function interleaveByStatus(byStatus: Conversation[][]): Conversation[] {
  * status was fetched first. A conversation missing the sort value sorts last in
  * either direction.
  */
-function sortMergedConversations(
-  byStatus: Conversation[][],
-  sort: string,
-  order: string,
-): Conversation[] {
+function sortMergedConversations(byStatus: MergeRow[][], sort: string, order: string): MergeRow[] {
   const interleaved = interleaveByStatus(byStatus);
   const readValue = MERGE_SORT_VALUES[sort];
   if (!readValue) return interleaved;
   const direction = order === "asc" ? 1 : -1;
   return interleaved.sort((a, b) => {
-    const av = readValue(a);
-    const bv = readValue(b);
+    const av = readValue(a.conversation);
+    const bv = readValue(b.conversation);
     const aMissing = isMissingSortValue(av);
     const bMissing = isMissingSortValue(bv);
     if (aMissing || bMissing) return aMissing === bMissing ? 0 : aMissing ? 1 : -1;
@@ -358,7 +390,11 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
     SearchConversationsShape,
     async (input): Promise<CallToolResult> => {
       try {
-        const { page: cursorPage, url: cursorUrl } = resolveCursorPage(input.cursor);
+        const {
+          page: cursorPage,
+          url: cursorUrl,
+          positions: cursorPositions,
+        } = resolveCursor(input.cursor);
         // A lookup by unique identifier is not a "what's open right now" browse,
         // so the closed-excluded default doesn't apply to it: a bare
         // conversationNumber searches every status, because people look up old
@@ -371,6 +407,12 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           throw new HelpScoutApiError(
             "INVALID_INPUT",
             "A page-URL cursor requires a single `status` — a multi-status search merges independently-paginated requests and can't resume from a single URL. Pass a plain page number instead, or set one `status`.",
+          );
+        }
+        if (cursorPositions && plan.mode === "single") {
+          throw new HelpScoutApiError(
+            "INVALID_INPUT",
+            "A merged multi-status cursor can't resume a single-status search — it carries a position per status. Keep the `status` you paged with, or drop the cursor to start over.",
           );
         }
 
@@ -423,10 +465,17 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           // default deliberately excludes "closed".
           const statuses = plan.statuses;
           searchedStatuses = [...statuses];
+          // Each status paginates independently, so each carries its own
+          // resume point. A plain page-number cursor predates the merged form
+          // and keeps its old meaning: page N of every status.
+          const startAt = (status: string): StatusPosition =>
+            cursorPositions?.[status] ?? { page: cursorPage ?? 1, skip: 0 };
+
           const results = await Promise.allSettled(
             statuses.map((status) =>
               api.get<PaginatedResponse<Conversation>>("/conversations", {
                 ...baseParams,
+                page: startAt(status).page,
                 status,
               }),
             ),
@@ -435,28 +484,52 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           const seen = new Set<number>();
           // Kept per status rather than flattened as we go: the merge below
           // needs the grouping to interleave the windows fairly.
-          const byStatus: Conversation[][] = [];
+          const byStatus: MergeRow[][] = [];
           const failed: Array<{ status: string; message: string; code: string }> = [];
           const totalByStatus: Record<string, number> = {};
+          // Per status: how long the upstream page was, whether another page
+          // sits behind it, and which of its row indexes this response has
+          // finished with. Together they decide where the status resumes.
+          const fetched: Record<
+            string,
+            { length: number; hasNextPage: boolean; settled: Set<number> }
+          > = {};
           let totalAvailable = 0;
-          let hasMorePages = false;
 
           for (const [i, r] of results.entries()) {
+            const statusName = statuses[i];
             if (r.status === "fulfilled") {
-              const statusName = statuses[i];
               const statusTotal = r.value.page?.totalElements || 0;
               totalByStatus[statusName] = statusTotal;
               totalAvailable += statusTotal;
-              if ((r.value.page?.number ?? 0) + 1 < (r.value.page?.totalPages ?? 0)) {
-                hasMorePages = true;
-              }
-              const statusWindow: Conversation[] = [];
-              for (const c of r.value._embedded?.conversations || []) {
-                if (!seen.has(c.id)) {
-                  seen.add(c.id);
-                  statusWindow.push(c);
+              const raw = r.value._embedded?.conversations || [];
+              const { page: requestedPage, skip } = startAt(statusName);
+              const settled = new Set<number>();
+              const statusWindow: MergeRow[] = [];
+              for (let index = skip; index < raw.length; index++) {
+                const c = raw[index];
+                if (seen.has(c.id)) {
+                  // A conversation holds exactly one status, so this is a
+                  // guard rather than a real case — but a row dropped here
+                  // was still delivered under its other status, so it counts
+                  // as read and must not stall this status's cursor.
+                  settled.add(index);
+                  continue;
                 }
+                seen.add(c.id);
+                statusWindow.push({ conversation: c, status: statusName, index });
               }
+              fetched[statusName] = {
+                length: raw.length,
+                // Compare against the page we asked for rather than the
+                // `number` echoed back: that keeps the check correct whichever
+                // way the API indexes its pages. Help Scout's `number` is
+                // 1-based, and the previous `number + 1 < totalPages` test
+                // read as "no more pages" while sitting on page N-1 of N,
+                // putting every status's final page out of reach.
+                hasNextPage: requestedPage < (r.value.page?.totalPages ?? 0),
+                settled,
+              };
               byStatus.push(statusWindow);
             } else {
               const reason = r.reason;
@@ -479,9 +552,44 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           }
           // The merge combines independently-sorted pages, so re-apply the
           // caller's sort across the merged window before truncating to limit.
-          conversations = sortMergedConversations(byStatus, input.sort, input.order);
-          if (conversations.length > input.limit) {
-            conversations = conversations.slice(0, input.limit);
+          let merged = sortMergedConversations(byStatus, input.sort, input.order);
+          if (merged.length > input.limit) merged = merged.slice(0, input.limit);
+          conversations = merged.map((row) => row.conversation);
+          for (const row of merged) fetched[row.status].settled.add(row.index);
+
+          // Resume each status at the first row this response did not settle,
+          // so the rows truncation left behind are the next page rather than
+          // nobody's. Taking the first gap instead of the highest settled
+          // index keeps the walk lossless even when the client-side
+          // comparator orders a status differently from the server: the worst
+          // it can then do is repeat a row, never drop one.
+          const nextPositions: StatusPositions = {};
+          let anyRemaining = false;
+          for (const status of statuses) {
+            const start = startAt(status);
+            const page = fetched[status];
+            if (!page) {
+              // The request failed. Hold the incoming position so a retry
+              // resumes here instead of restarting the status from scratch.
+              // It deliberately does not keep pagination alive on its own —
+              // the error is already in the response, and paging on a status
+              // that only ever fails would be an endless walk.
+              nextPositions[status] = start;
+              continue;
+            }
+            let consumed = start.skip;
+            while (page.settled.has(consumed)) consumed++;
+            if (consumed < page.length) {
+              nextPositions[status] = { page: start.page, skip: consumed };
+              anyRemaining = true;
+            } else if (page.hasNextPage) {
+              nextPositions[status] = { page: start.page + 1, skip: 0 };
+              anyRemaining = true;
+            } else {
+              // Exhausted: parked at the end of its last page, so later
+              // requests still pick up its totals but draw no rows from it.
+              nextPositions[status] = { page: start.page, skip: page.length };
+            }
           }
 
           pagination = {
@@ -496,9 +604,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
                 ? `[WARNING] ${failed.length} status(es) failed. Results incomplete.`
                 : `Merged results from ${Object.keys(totalByStatus).length} statuses. Returned ${conversations.length} of ${totalAvailable}.`,
           };
-          if (hasMorePages) {
-            nextCursor = String((cursorPage ?? 1) + 1);
-          }
+          if (anyRemaining) nextCursor = encodeMergedCursor(nextPositions);
         }
 
         // Client-side createdBefore filter — must rebuild pagination so

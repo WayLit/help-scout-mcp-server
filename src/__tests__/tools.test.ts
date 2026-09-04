@@ -3,6 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { MERGED_CURSOR_PREFIX, encodeMergedCursor, parseMergedCursor } from "../conversation-query";
 import { HelpScoutApiError } from "../helpscout-api";
 import { configureRedaction } from "../redaction";
 import { SearchConversationsShape } from "../schemas";
@@ -1654,5 +1655,263 @@ describe("searchConversations createdBefore filtering", () => {
       totalElements: 1,
       totalPages: 1,
     });
+  });
+});
+
+describe("searchConversations merged multi-status pagination", () => {
+  // Help Scout's `page` block is 1-based; `totalPages` is what tells us
+  // whether a status has another upstream page behind the one we just read.
+  function pageOf(
+    conversations: Array<Record<string, unknown>>,
+    page: { number?: number; totalPages?: number; totalElements?: number } = {},
+  ) {
+    return {
+      _embedded: { conversations },
+      page: {
+        number: page.number ?? 1,
+        totalPages: page.totalPages ?? 1,
+        totalElements: page.totalElements ?? conversations.length,
+      },
+    };
+  }
+
+  function requestedPages(api: ReturnType<typeof fakeApi>): Array<[string, unknown]> {
+    return api.get.mock.calls.map((c) => {
+      const params = c[1] as { status?: string; page?: unknown };
+      return [params?.status ?? "", params?.page];
+    });
+  }
+
+  const at = (day: number) => `2026-01-${String(day).padStart(2, "0")}T00:00:00Z`;
+
+  it("returns the rows the truncated window left behind instead of skipping them", async () => {
+    const { api, tools } = setupServer();
+    // Four rows per status, a window of four: half the fetched rows fall
+    // outside the truncation on page one and must survive to page two.
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 1, createdAt: at(10) },
+          { id: 2, createdAt: at(9) },
+          { id: 3, createdAt: at(4) },
+          { id: 4, createdAt: at(3) },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 5, createdAt: at(8) },
+          { id: 6, createdAt: at(7) },
+          { id: 7, createdAt: at(6) },
+          { id: 8, createdAt: at(5) },
+        ]),
+      );
+
+    const first = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 4, sort: "createdAt", order: "desc" },
+      {},
+    );
+    const page1 = parseResult(first) as {
+      results: Array<{ id: number }>;
+      nextCursor?: string;
+    };
+    expect(page1.results.map((r) => r.id)).toEqual([1, 2, 5, 6]);
+    expect(page1.nextCursor).toBeDefined();
+    // Two rows of each status were consumed, so each resumes mid-page.
+    expect(parseMergedCursor(page1.nextCursor as string)).toEqual({
+      active: { page: 1, skip: 2 },
+      pending: { page: 1, skip: 2 },
+    });
+
+    api.get
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 1, createdAt: at(10) },
+          { id: 2, createdAt: at(9) },
+          { id: 3, createdAt: at(4) },
+          { id: 4, createdAt: at(3) },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 5, createdAt: at(8) },
+          { id: 6, createdAt: at(7) },
+          { id: 7, createdAt: at(6) },
+          { id: 8, createdAt: at(5) },
+        ]),
+      );
+
+    const second = await tools.searchConversations.handler(
+      {
+        status: ["active", "pending"],
+        cursor: page1.nextCursor,
+        limit: 4,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+    const page2 = parseResult(second) as { results: Array<{ id: number }>; nextCursor?: string };
+    expect(page2.results.map((r) => r.id)).toEqual([7, 8, 3, 4]);
+    // Every row is reachable exactly once across the two pages.
+    const seen = [...page1.results, ...page2.results].map((r) => r.id).sort((a, b) => a - b);
+    expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // Both statuses are used up and have no further upstream page.
+    expect(page2.nextCursor).toBeUndefined();
+  });
+
+  it("resumes each status at its own upstream page and offset", async () => {
+    const { api, tools } = setupServer();
+    // active is fully consumed and rolls to its next upstream page; pending
+    // gives up one row and stays put.
+    api.get
+      .mockResolvedValueOnce(
+        pageOf(
+          [
+            { id: 1, createdAt: at(10) },
+            { id: 2, createdAt: at(9) },
+            { id: 3, createdAt: at(8) },
+          ],
+          { totalPages: 2 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 4, createdAt: at(2) },
+          { id: 5, createdAt: at(1) },
+        ]),
+      );
+
+    const first = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 4, sort: "createdAt", order: "desc" },
+      {},
+    );
+    const page1 = parseResult(first) as { results: Array<{ id: number }>; nextCursor?: string };
+    expect(page1.results.map((r) => r.id)).toEqual([1, 2, 3, 4]);
+    expect(parseMergedCursor(page1.nextCursor as string)).toEqual({
+      active: { page: 2, skip: 0 },
+      pending: { page: 1, skip: 1 },
+    });
+
+    api.get.mockResolvedValue(pageOf([]));
+    await tools.searchConversations.handler(
+      {
+        status: ["active", "pending"],
+        cursor: page1.nextCursor,
+        limit: 4,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(requestedPages(api).slice(2)).toEqual([
+      ["active", 2],
+      ["pending", 1],
+    ]);
+  });
+
+  it("stops emitting a cursor once every status is exhausted", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(pageOf([{ id: 1, createdAt: at(1) }]));
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect((parseResult(result) as { nextCursor?: string }).nextCursor).toBeUndefined();
+  });
+
+  it("keeps emitting a cursor while any status still has an upstream page", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, createdAt: at(1) }], { totalPages: 3 }))
+      .mockResolvedValueOnce(pageOf([{ id: 2, createdAt: at(2) }]));
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { nextCursor?: string };
+    expect(parseMergedCursor(payload.nextCursor as string)).toEqual({
+      active: { page: 2, skip: 0 },
+      pending: { page: 1, skip: 1 },
+    });
+  });
+
+  it("still accepts a plain page number on the merged path", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(pageOf([]));
+
+    await tools.searchConversations.handler(
+      { status: ["active", "pending"], cursor: "3", limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    expect(requestedPages(api)).toEqual([
+      ["active", 3],
+      ["pending", 3],
+    ]);
+  });
+
+  it("holds a failed status at its incoming position so a retry resumes there", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, createdAt: at(1) }], { totalPages: 2 }))
+      .mockRejectedValueOnce(new HelpScoutApiError("UPSTREAM_ERROR", "upstream blew up"));
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "createdAt", order: "desc" },
+      {},
+    );
+
+    const payload = parseResult(result) as {
+      nextCursor?: string;
+      pagination: { errors?: Array<{ status: string }> };
+    };
+    expect(payload.pagination.errors?.map((e) => e.status)).toEqual(["pending"]);
+    expect(parseMergedCursor(payload.nextCursor as string)).toEqual({
+      active: { page: 2, skip: 0 },
+      pending: { page: 1, skip: 0 },
+    });
+  });
+
+  it("rejects a merged cursor on a single-status search", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: "active",
+        cursor: encodeMergedCursor({ active: { page: 2, skip: 0 } }),
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    expect((parseResult(result) as { error?: string }).error).toBe("INVALID_INPUT");
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed merged cursor", async () => {
+    const { api, tools } = setupServer();
+
+    const result = await tools.searchConversations.handler(
+      {
+        status: ["active", "pending"],
+        cursor: `${MERGED_CURSOR_PREFIX}garbage`,
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    expect((parseResult(result) as { error?: string }).error).toBe("INVALID_INPUT");
+    expect(api.get).not.toHaveBeenCalled();
   });
 });

@@ -82,7 +82,12 @@ export const SearchConversationsShape = {
 
   // Paging and shaping
   limit: z.number().min(1).max(100).default(50),
-  cursor: z.string().optional(),
+  cursor: z
+    .string()
+    .optional()
+    .describe(
+      "Pass a previous response's nextCursor back unchanged for the next page. A multi-status search returns an opaque cursor; don't edit it or reuse it with a different `status`.",
+    ),
   sort: z
     .enum([
       "createdAt",

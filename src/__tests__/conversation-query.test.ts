@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MERGED_CURSOR_PREFIX,
   buildConversationQuery,
   combineQueries,
+  encodeMergedCursor,
   escapeQueryTerm,
+  isMergedCursor,
+  parseMergedCursor,
   resolveStatusPlan,
 } from "../conversation-query";
 
@@ -173,5 +177,63 @@ describe("resolveStatusPlan", () => {
       mode: "multi",
       statuses: ["active", "pending"],
     });
+  });
+});
+
+describe("merged status cursor", () => {
+  it("round-trips a position per status", () => {
+    const positions = { active: { page: 1, skip: 40 }, pending: { page: 2, skip: 0 } };
+    expect(parseMergedCursor(encodeMergedCursor(positions))).toEqual(positions);
+  });
+
+  it("emits an opaque token, not a readable page number", () => {
+    const cursor = encodeMergedCursor({ active: { page: 3, skip: 7 } });
+    expect(isMergedCursor(cursor)).toBe(true);
+    expect(cursor).not.toContain("active");
+    expect(Number(cursor)).toBeNaN();
+  });
+
+  it("stays inside the base64url alphabet so it survives a query string", () => {
+    const cursor = encodeMergedCursor({
+      active: { page: 1, skip: 1 },
+      pending: { page: 1, skip: 2 },
+    });
+    expect(cursor.slice(MERGED_CURSOR_PREFIX.length)).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("does not claim a plain page number or a page URL", () => {
+    expect(isMergedCursor("3")).toBe(false);
+    expect(isMergedCursor("https://api.helpscout.net/v2/conversations?page=2")).toBe(false);
+  });
+
+  it("rejects a payload that is not valid base64url JSON", () => {
+    expect(parseMergedCursor(`${MERGED_CURSOR_PREFIX}not-base64-json`)).toBeUndefined();
+  });
+
+  it("rejects a version it does not know", () => {
+    const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 99, pos: {} }))}`;
+    expect(parseMergedCursor(forged)).toBeUndefined();
+  });
+
+  it("rejects a position that is not a pair of non-negative integers", () => {
+    for (const pos of [
+      { active: [0, 0] },
+      { active: [1, -1] },
+      { active: [1.5, 0] },
+      { active: [1] },
+      { active: "1,0" },
+    ]) {
+      const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 1, pos }))}`;
+      expect(parseMergedCursor(forged), JSON.stringify(pos)).toBeUndefined();
+    }
+  });
+
+  it("rejects a cursor carrying no positions at all", () => {
+    const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 1, pos: {} }))}`;
+    expect(parseMergedCursor(forged)).toBeUndefined();
+  });
+
+  it("returns undefined for anything without the prefix", () => {
+    expect(parseMergedCursor("2")).toBeUndefined();
   });
 });
