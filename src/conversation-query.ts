@@ -119,3 +119,100 @@ export function resolveStatusPlan(status: string | string[] | undefined): Status
   }
   return { mode: "single", status };
 }
+
+/** Where one status of a merged sweep resumes: an upstream page, and how many
+ *  of that page's rows a previous response already delivered. */
+export interface StatusPosition {
+  page: number;
+  skip: number;
+}
+
+export type StatusPositions = Record<string, StatusPosition>;
+
+/**
+ * A merged sweep's resume state: one position per status, plus the page size
+ * those positions were measured against.
+ *
+ * The size has to travel with them. A `{page, skip}` pair only locates a row
+ * relative to a page size — page 2 of 10 is rows 11-20, page 2 of 50 is rows
+ * 51-100 — so a cursor replayed under a different `limit` would resume
+ * somewhere else entirely and step over everything in between. Carrying the
+ * size lets the caller-facing layer refuse that instead of silently skipping.
+ */
+export interface MergedCursor {
+  size: number;
+  positions: StatusPositions;
+}
+
+/**
+ * Marks a cursor as a merged multi-status position set. A plain page number
+ * and a Help Scout page URL are the other two cursor forms `searchConversations`
+ * accepts, and neither can start with this, so the prefix alone decides which
+ * parser runs.
+ */
+export const MERGED_CURSOR_PREFIX = "hsm1.";
+
+const MERGED_CURSOR_VERSION = 1;
+
+/** Positions are stored as `[page, skip]` pairs: a cursor rides in a JSON tool
+ *  result and then back out in the next call, so the compact form is worth it. */
+type EncodedPosition = [number, number];
+
+export function isMergedCursor(cursor: string): boolean {
+  return cursor.startsWith(MERGED_CURSOR_PREFIX);
+}
+
+/**
+ * Encode one position per status into an opaque cursor.
+ *
+ * Opaque on purpose. A merged sweep paginates each status independently, so
+ * the position set is the only honest description of "where the last response
+ * stopped" — but its shape is ours to change, and a caller that parsed it
+ * would pin it. Base64url keeps it safe to hand back through a query string.
+ */
+export function encodeMergedCursor({ size, positions }: MergedCursor): string {
+  const pos: Record<string, EncodedPosition> = {};
+  for (const [status, { page, skip }] of Object.entries(positions)) {
+    pos[status] = [page, skip];
+  }
+  const packed = btoa(JSON.stringify({ v: MERGED_CURSOR_VERSION, size, pos }));
+  return MERGED_CURSOR_PREFIX + packed.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Decode a merged cursor, or return undefined if it is not one we can use —
+ * wrong prefix, corrupt payload, a version we don't know, a size that isn't a
+ * usable page size, or a position that isn't a plausible page/skip pair.
+ *
+ * Every field is re-validated rather than trusted: the cursor makes a round
+ * trip through the caller, so a forged one could otherwise drive `page` to a
+ * negative or fractional value in an upstream request, or `skip` to a value
+ * that silently discards a whole window.
+ */
+export function parseMergedCursor(cursor: string): MergedCursor | undefined {
+  if (!isMergedCursor(cursor)) return undefined;
+  const packed = cursor.slice(MERGED_CURSOR_PREFIX.length);
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(atob(packed.replace(/-/g, "+").replace(/_/g, "/")));
+  } catch {
+    return undefined;
+  }
+  if (typeof decoded !== "object" || decoded === null) return undefined;
+  const { v, size, pos } = decoded as { v?: unknown; size?: unknown; pos?: unknown };
+  if (v !== MERGED_CURSOR_VERSION) return undefined;
+  if (!Number.isInteger(size) || (size as number) < 1) return undefined;
+  if (typeof pos !== "object" || pos === null) return undefined;
+
+  const positions: StatusPositions = {};
+  for (const [status, value] of Object.entries(pos as Record<string, unknown>)) {
+    if (!Array.isArray(value) || value.length !== 2) return undefined;
+    const [page, skip] = value;
+    if (!Number.isInteger(page) || (page as number) < 1) return undefined;
+    if (!Number.isInteger(skip) || (skip as number) < 0) return undefined;
+    positions[status] = { page: page as number, skip: skip as number };
+  }
+  // An empty set would resume nothing; a cursor that resumes nothing is a bug
+  // at the other end, not an empty result set.
+  return Object.keys(positions).length > 0 ? { size: size as number, positions } : undefined;
+}

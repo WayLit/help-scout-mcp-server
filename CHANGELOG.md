@@ -58,10 +58,35 @@ sorted, `limit` 50), so an unfiltered structural scan is no longer reachable.
   fetched rows can be ordered together. Rows whose payload omits the sort field
   keep a round-robin interleave of the per-status results, so no single status
   can consume the whole `limit`.
+- A multi-status `searchConversations` now returns an **opaque** `nextCursor`
+  instead of a page number, because one page number cannot describe several
+  independently-paginated statuses. Pass it back unchanged; a plain page number
+  still works and still means "page N of every status". Single-status searches
+  are unaffected and keep returning Help Scout's own page URL. The cursor is
+  tied to the search that issued it: replaying it with a different `limit`, or
+  against a different set of statuses, is rejected as `INVALID_INPUT` rather
+  than resuming at the wrong row or silently mixing a resumed status with a
+  restarted one.
+
+### Fixed
+
+- **A multi-status search no longer drops the rows its merged window truncated
+  away** ([#79]). Every status was advanced a full upstream page even though
+  only part of each page fit inside `limit`, so the remainder was returned by
+  no page at all — a default `limit: 50` sweep of `active`+`pending` could
+  strand 50 conversations per page, with `pagination.totalAvailable` still
+  reporting the full total. The cursor now records a resume position per
+  status, so each one continues exactly where the previous response stopped.
+- **Each status's final page is reachable again** on a multi-status search. The
+  "is there another page" test compared `page.number + 1` against `totalPages`,
+  but Help Scout's `page.number` is 1-based, so a status sitting on page N-1 of
+  N reported itself finished and its last page was never fetched.
 
 ## [2.0.0] - 2026-08-24
 
 Released as a GitHub release. See the release notes for details.
+
+[#79]: https://github.com/WayLit/help-scout-mcp-server/issues/79
 
 [3.0.0]: https://github.com/WayLit/help-scout-mcp-server/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/WayLit/help-scout-mcp-server/releases/tag/v2.0.0
