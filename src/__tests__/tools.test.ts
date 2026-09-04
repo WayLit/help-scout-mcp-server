@@ -1718,8 +1718,8 @@ describe("searchConversations merged multi-status pagination", () => {
     expect(page1.nextCursor).toBeDefined();
     // Two rows of each status were consumed, so each resumes mid-page.
     expect(parseMergedCursor(page1.nextCursor as string)).toEqual({
-      active: { page: 1, skip: 2 },
-      pending: { page: 1, skip: 2 },
+      size: 4,
+      positions: { active: { page: 1, skip: 2 }, pending: { page: 1, skip: 2 } },
     });
 
     api.get
@@ -1788,8 +1788,8 @@ describe("searchConversations merged multi-status pagination", () => {
     const page1 = parseResult(first) as { results: Array<{ id: number }>; nextCursor?: string };
     expect(page1.results.map((r) => r.id)).toEqual([1, 2, 3, 4]);
     expect(parseMergedCursor(page1.nextCursor as string)).toEqual({
-      active: { page: 2, skip: 0 },
-      pending: { page: 1, skip: 1 },
+      size: 4,
+      positions: { active: { page: 2, skip: 0 }, pending: { page: 1, skip: 1 } },
     });
 
     api.get.mockResolvedValue(pageOf([]));
@@ -1835,8 +1835,8 @@ describe("searchConversations merged multi-status pagination", () => {
 
     const payload = parseResult(result) as { nextCursor?: string };
     expect(parseMergedCursor(payload.nextCursor as string)).toEqual({
-      active: { page: 2, skip: 0 },
-      pending: { page: 1, skip: 1 },
+      size: 50,
+      positions: { active: { page: 2, skip: 0 }, pending: { page: 1, skip: 1 } },
     });
   });
 
@@ -1872,8 +1872,8 @@ describe("searchConversations merged multi-status pagination", () => {
     };
     expect(payload.pagination.errors?.map((e) => e.status)).toEqual(["pending"]);
     expect(parseMergedCursor(payload.nextCursor as string)).toEqual({
-      active: { page: 2, skip: 0 },
-      pending: { page: 1, skip: 0 },
+      size: 50,
+      positions: { active: { page: 2, skip: 0 }, pending: { page: 1, skip: 0 } },
     });
   });
 
@@ -1883,7 +1883,7 @@ describe("searchConversations merged multi-status pagination", () => {
     const result = await tools.searchConversations.handler(
       {
         status: "active",
-        cursor: encodeMergedCursor({ active: { page: 2, skip: 0 } }),
+        cursor: encodeMergedCursor({ size: 50, positions: { active: { page: 2, skip: 0 } } }),
         limit: 50,
         sort: "createdAt",
         order: "desc",
@@ -1894,6 +1894,86 @@ describe("searchConversations merged multi-status pagination", () => {
     expect(result.isError).toBe(true);
     expect((parseResult(result) as { error?: string }).error).toBe("INVALID_INPUT");
     expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("rejects a merged cursor replayed with a different limit", async () => {
+    const { api, tools } = setupServer();
+
+    // `{page, skip}` only locates a row relative to the page size that
+    // produced it: page 2 of 10 is rows 11-20, page 2 of 50 is rows 51-100.
+    // Honouring the cursor under the new limit would step clean over rows
+    // 11-50, so the mismatch is an input error rather than a silent skip.
+    const result = await tools.searchConversations.handler(
+      {
+        status: ["active", "pending"],
+        cursor: encodeMergedCursor({
+          size: 10,
+          positions: { active: { page: 2, skip: 0 }, pending: { page: 2, skip: 0 } },
+        }),
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error?: string; message?: string };
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(payload.message).toContain("limit");
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("rejects a merged cursor whose statuses are not the ones being searched", async () => {
+    const { api, tools } = setupServer();
+
+    // Cursor minted for active+closed, replayed against the default
+    // active+pending sweep: `active` would resume, `pending` would restart at
+    // page 1, and `closed` would be dropped — one hybrid page that is neither
+    // the next page of the old search nor the first page of the new one.
+    const result = await tools.searchConversations.handler(
+      {
+        cursor: encodeMergedCursor({
+          size: 50,
+          positions: { active: { page: 2, skip: 0 }, closed: { page: 2, skip: 0 } },
+        }),
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseResult(result) as { error?: string; message?: string };
+    expect(payload.error).toBe("INVALID_INPUT");
+    expect(payload.message).toContain("status");
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("accepts a merged cursor whose statuses match in a different order", async () => {
+    const { api, tools } = setupServer();
+    api.get.mockResolvedValue(pageOf([]));
+
+    await tools.searchConversations.handler(
+      {
+        status: ["pending", "active"],
+        cursor: encodeMergedCursor({
+          size: 50,
+          positions: { active: { page: 4, skip: 0 }, pending: { page: 7, skip: 0 } },
+        }),
+        limit: 50,
+        sort: "createdAt",
+        order: "desc",
+      },
+      {},
+    );
+
+    // Same set, so each status still resumes at its own recorded page.
+    expect(requestedPages(api)).toEqual([
+      ["pending", 7],
+      ["active", 4],
+    ]);
   });
 
   it("rejects a malformed merged cursor", async () => {

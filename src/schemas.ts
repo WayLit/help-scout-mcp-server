@@ -86,7 +86,7 @@ export const SearchConversationsShape = {
     .string()
     .optional()
     .describe(
-      "Pass a previous response's nextCursor back unchanged for the next page. A multi-status search returns an opaque cursor; don't edit it or reuse it with a different `status`.",
+      "Pass a previous response's nextCursor back unchanged for the next page. A multi-status search returns an opaque cursor tied to the search that issued it: keep the same `status` and `limit` while paging with it, or drop it to start over.",
     ),
   sort: z
     .enum([
