@@ -40,7 +40,7 @@ When a user mentions an inbox by name:
 \`searchConversations\` is the single conversation search tool. Reach for:
 - \`searchTerms\` for keyword search — matches either the subject or the body, the right default when the caller just wants "tickets mentioning X"
 - \`contentTerms\` (body-only) / \`subjectTerms\` (subject-only) to target one field specifically — passing both narrows to conversations matching in both, it does not widen the search
-- \`customerEmail\` / \`emailDomain\` / \`customerIds\` to scope to a customer
+- \`customerEmail\` / \`emailDomain\` / \`customerIds\` to scope to a customer — pair with \`status: "all"\` when reviewing a customer's history, since the default omits closed tickets
 - \`assignedTo\` / \`folderId\` / \`conversationNumber\` for structural lookups
 - \`query\` for raw Help Scout syntax when you need full control
 

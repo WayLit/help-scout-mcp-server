@@ -22,7 +22,7 @@ This is a breaking tool-surface change. Removed names are **not** aliased —
 | Change | Migration |
 |---|---|
 | `advancedConversationSearch` removed | Use `searchConversations` with `contentTerms`/`subjectTerms`/`customerEmail`/`emailDomain`/`tags` |
-| `comprehensiveConversationSearch` removed | Use `searchConversations` with `contentTerms`/`subjectTerms` and `status` as an array |
+| `comprehensiveConversationSearch` removed | Use `searchConversations` with `searchTerms` and `status` as an array. `searchTerms` matches the subject **or** the body, which is what the old `searchIn: ["both"]` default did; reach for `contentTerms`/`subjectTerms` only where `searchIn` narrowed to one field, since passing both AND-s them |
 | `structuredConversationFilter` removed | Use `searchConversations` with `assignedTo`/`folderId`/`customerIds`/`conversationNumber` |
 | `searchInboxes` removed | Use `listAllInboxes` with `query` |
 | `resultsByStatus` output shape dropped | Flat `results` plus `pagination.totalByStatus` carries the same information |

@@ -1395,6 +1395,88 @@ describe("searchConversations merged ordering", () => {
     expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
   });
 
+  // The three readers below take their values off the shape Help Scout
+  // actually sends — a top-level `mailboxId` and `primaryCustomer`
+  // `{first, last, email}` — not the `mailbox`/`customer` objects our
+  // Conversation interface models, which no live payload carries. Each
+  // fixture here deliberately omits the modelled spelling, so a reader that
+  // only looked there would find every value missing, separate nothing, and
+  // leave the interleaved [1, 2, 3] order in place.
+  it("orders the merged window by primaryCustomer.email, the live payload field", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, primaryCustomer: { email: "carol@acme.com" } }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, primaryCustomer: { email: "alice@acme.com" } },
+          { id: 3, primaryCustomer: { email: "bob@acme.com" } },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "customerEmail", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("orders the merged window by primaryCustomer first/last, the live payload fields", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, primaryCustomer: { first: "Carol", last: "Ng" } }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, primaryCustomer: { first: "Alice", last: "Ng" } },
+          { id: 3, primaryCustomer: { first: "Bob", last: "Ng" } },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "customerName", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("orders the merged window by the top-level mailboxId, the live payload field", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, mailboxId: 30 }]))
+      .mockResolvedValueOnce(pageOf([{ id: 2, mailboxId: 10 }, { id: 3, mailboxId: 20 }]));
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "mailboxId", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("still reads the modelled mailbox/customer spelling when a payload uses it", async () => {
+    const { api, tools } = setupServer();
+    api.get
+      .mockResolvedValueOnce(pageOf([{ id: 1, customer: { email: "carol@acme.com" } }]))
+      .mockResolvedValueOnce(
+        pageOf([
+          { id: 2, customer: { email: "alice@acme.com" } },
+          { id: 3, customer: { email: "bob@acme.com" } },
+        ]),
+      );
+
+    const result = await tools.searchConversations.handler(
+      { status: ["active", "pending"], limit: 50, sort: "customerEmail", order: "asc" },
+      {},
+    );
+
+    const payload = parseResult(result) as { results: Array<{ id: number }> };
+    expect(payload.results.map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
   it("interleaves the per-status windows when the payload omits the sort field", async () => {
     const { api, tools } = setupServer();
     // The documented Mailbox API conversation response has no top-level

@@ -242,6 +242,17 @@ function buildFilteredPagination(
  * but the documented conversation response carries `customerWaitingSince` as
  * an object instead, so we read that first and fall back to a bare
  * `waitingSince` if a payload happens to supply one.
+ *
+ * `mailboxId`, `customerName`, and `customerEmail` read the live payload the
+ * same way. The API sends a top-level `mailboxId` and a `primaryCustomer` of
+ * `{first, last, email}`; our `Conversation` models `mailbox`/`customer`
+ * instead, a mismatch that predates this file (see the note on those fields in
+ * ../schemas). Reading the live spelling first and the modelled one second
+ * means these three sorts work against Help Scout *and* against the fixtures,
+ * without touching the shape `redactConversationCustomers` depends on. If they
+ * only read the modelled spelling every value would be missing, the comparator
+ * would separate nothing, and the merge would silently fall back to the
+ * round-robin order for three of its nine sort values.
  */
 const MERGE_SORT_VALUES: Record<
   string,
@@ -251,10 +262,10 @@ const MERGE_SORT_VALUES: Record<
   modifiedAt: (c) => Date.parse(c.updatedAt),
   number: (c) => c.number,
   waitingSince: (c) => Date.parse(c.customerWaitingSince?.time ?? c.waitingSince ?? ""),
-  mailboxId: (c) => c.mailbox?.id,
+  mailboxId: (c) => c.mailboxId ?? c.mailbox?.id,
   customerName: (c) =>
-    `${c.customer?.firstName ?? ""} ${c.customer?.lastName ?? ""}`.trim(),
-  customerEmail: (c) => c.customer?.email,
+    `${c.primaryCustomer?.first ?? c.customer?.firstName ?? ""} ${c.primaryCustomer?.last ?? c.customer?.lastName ?? ""}`.trim(),
+  customerEmail: (c) => c.primaryCustomer?.email ?? c.customer?.email,
   status: (c) => c.status,
   subject: (c) => c.subject,
 };

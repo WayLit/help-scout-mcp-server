@@ -40,7 +40,7 @@ ${inboxList}
 ## Workflow Patterns
 - **Ticket investigation**: searchConversations → getConversationSummary → getThreads
 - **Keyword research**: searchConversations (\`searchTerms\` matches subject or body; \`contentTerms\`/\`subjectTerms\` target one field — passing both requires a match in both) → getThreads for details
-- **Customer history**: searchCustomersByEmail → getCustomer → searchConversations (customerIds) → getThreads
+- **Customer history**: searchCustomersByEmail → getCustomer → searchConversations (customerIds with status:"all" — a history review wants resolved tickets too, which the active+pending default omits) → getThreads
 - **Account review**: listOrganizations/getOrganization → getOrganizationMembers → getOrganizationConversations
 - **Resolve a ticket**: locate it (search/lookup) → getThreads to confirm → updateConversationStatus
 - **Reply to a ticket**: gatherReplyContext → compose the reply → draftReply to save it (review & send from Help Scout)
