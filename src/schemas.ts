@@ -269,6 +269,11 @@ export interface Thread {
   action: { type: string; text: string } | null;
   body: string;
   source: { type: string; via: string };
+  // Recipient envelope. Help Scout returns these on message/customer threads;
+  // they are raw addresses and must go through redaction with the body.
+  to?: string[] | null;
+  cc?: string[] | null;
+  bcc?: string[] | null;
   customer: { id: number; firstName: string; lastName: string; email: string } | null;
   createdBy: { id: number; firstName: string; lastName: string; email: string } | null;
   assignedTo: { id: number; firstName: string; lastName: string; email: string } | null;

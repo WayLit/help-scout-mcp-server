@@ -106,15 +106,47 @@ export async function redactFields<T extends Record<string, unknown>>(
   return obj;
 }
 
-/** Convenience: deep-redact .body on an array of thread-shaped objects. */
-export async function redactThreadBodies<T extends { body?: string }>(threads: T[]): Promise<T[]> {
+/**
+ * Redact an array of thread-shaped objects: the free-text `body` gets a
+ * detector pass, the recipient envelope (`to`/`cc`/`bcc`) is tokenized, and
+ * the person-shaped fields (`customer`, `createdBy`, `assignedTo`) go through
+ * `redactCustomerFields`.
+ *
+ * The envelope matters as much as the body. Help Scout returns recipient
+ * addresses and a `createdBy.email` on every thread, and the typed `Thread`
+ * shape modelled neither `to`/`cc`/`bcc` nor a redaction pass over them, so
+ * raw addresses reached callers untouched while bodies came back clean.
+ */
+export async function redactThreads<
+  T extends {
+    body?: string;
+    to?: unknown;
+    cc?: unknown;
+    bcc?: unknown;
+    customer?: unknown;
+    createdBy?: unknown;
+    assignedTo?: unknown;
+  },
+>(threads: T[]): Promise<T[]> {
   if (!enabled) return threads;
-  for (const t of threads) {
-    if (typeof t.body === "string") {
-      t.body = await redactText(t.body);
-    }
-  }
-  return threads;
+  return Promise.all(
+    threads.map(async (t) => {
+      const out = { ...t } as Record<string, unknown>;
+      if (typeof out.body === "string") out.body = await redactText(out.body);
+      for (const field of ["to", "cc", "bcc"] as const) {
+        if (Array.isArray(out[field])) {
+          out[field] = (out[field] as unknown[]).map(() => "[EMAIL_REDACTED]");
+        }
+      }
+      for (const field of ["customer", "createdBy", "assignedTo"] as const) {
+        const person = out[field];
+        if (person && typeof person === "object") {
+          out[field] = await redactCustomerFields(person as object);
+        }
+      }
+      return out as T;
+    }),
+  );
 }
 
 /**
