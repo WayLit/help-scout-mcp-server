@@ -9,7 +9,7 @@ import {
   redactCustomerFields,
   redactOrganizationFields,
   redactText,
-  redactThreadBodies,
+  redactThreads,
 } from "../redaction";
 
 describe("redaction toggle", () => {
@@ -133,7 +133,7 @@ describe("redactAddressFields", () => {
   });
 });
 
-describe("redactThreadBodies", () => {
+describe("redactThreads", () => {
   beforeEach(() => configureRedaction({}));
 
   it("redacts body field on each thread", async () => {
@@ -141,16 +141,82 @@ describe("redactThreadBodies", () => {
       { id: 1, body: "Customer email: jane@acme.com" },
       { id: 2, body: "" },
     ];
-    const out = await redactThreadBodies(threads);
+    const out = await redactThreads(threads);
     expect(out[0]?.body).not.toContain("jane@acme.com");
     expect(out[1]?.body).toBe("");
   });
 
+  it("tokenizes the to/cc/bcc recipient envelope", async () => {
+    const threads = [
+      {
+        id: 1,
+        body: "hi",
+        to: ["ops@acme.com"],
+        cc: ["cfo@acme.com", "ap@acme.com"],
+        bcc: ["legal@acme.com"],
+      },
+    ];
+    const out = await redactThreads(threads);
+    expect(out[0]?.to).toEqual(["[EMAIL_REDACTED]"]);
+    expect(out[0]?.cc).toEqual(["[EMAIL_REDACTED]", "[EMAIL_REDACTED]"]);
+    expect(out[0]?.bcc).toEqual(["[EMAIL_REDACTED]"]);
+  });
+
+  it("redacts customer/createdBy/assignedTo emails, leaves names intact", async () => {
+    const threads = [
+      {
+        id: 1,
+        body: "hi",
+        customer: { id: 9, firstName: "Jane", lastName: "Roe", email: "jane@acme.com" },
+        createdBy: { id: 9, firstName: "Jane", lastName: "Roe", email: "jane@acme.com" },
+        assignedTo: { id: 2, firstName: "Sam", lastName: "Staff", email: "sam@support.test" },
+      },
+    ];
+    const out = await redactThreads(threads);
+    expect(out[0]?.customer).toMatchObject({ firstName: "Jane", email: "[EMAIL_REDACTED]" });
+    expect(out[0]?.createdBy).toMatchObject({ firstName: "Jane", email: "[EMAIL_REDACTED]" });
+    expect(out[0]?.assignedTo).toMatchObject({ firstName: "Sam", email: "[EMAIL_REDACTED]" });
+  });
+
+  it("leaves null and absent person fields alone", async () => {
+    const threads = [{ id: 1, body: "hi", customer: null, createdBy: null }];
+    const out = await redactThreads(threads);
+    expect(out[0]?.customer).toBeNull();
+    expect(out[0]?.createdBy).toBeNull();
+    expect(out[0]).not.toHaveProperty("assignedTo");
+  });
+
+  it("does not leak any address from a full thread payload", async () => {
+    const threads = [
+      {
+        id: 1,
+        body: `To: Jane Roe &lt;<a href="mailto:jane@acme.com">jane@acme.com</a>&gt;`,
+        to: ["ops@acme.com"],
+        cc: ["cfo@acme.com"],
+        bcc: [],
+        customer: { id: 9, firstName: "Jane", email: "jane@acme.com" },
+        createdBy: { id: 9, firstName: "Jane", email: "jane@acme.com" },
+        assignedTo: { id: 2, firstName: "Sam", email: "sam@support.test" },
+      },
+    ];
+    const out = await redactThreads(threads);
+    expect(JSON.stringify(out)).not.toMatch(/@acme\.com|@support\.test/);
+  });
+
   it("no-op when disabled", async () => {
     configureRedaction({ REDACT_PII: "false" });
-    const threads = [{ id: 1, body: "jane@acme.com" }];
-    const out = await redactThreadBodies(threads);
+    const threads = [
+      {
+        id: 1,
+        body: "jane@acme.com",
+        cc: ["cfo@acme.com"],
+        createdBy: { id: 9, email: "jane@acme.com" },
+      },
+    ];
+    const out = await redactThreads(threads);
     expect(out[0]?.body).toBe("jane@acme.com");
+    expect(out[0]?.cc).toEqual(["cfo@acme.com"]);
+    expect(out[0]?.createdBy).toMatchObject({ email: "jane@acme.com" });
   });
 });
 

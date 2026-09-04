@@ -28,7 +28,7 @@ import {
   redactCustomerList,
   redactOrganizationFields,
   redactText,
-  redactThreadBodies,
+  redactThreads,
 } from "./redaction";
 import {
   AdvancedConversationSearchShape,
@@ -659,7 +659,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
                 body: await redactText(latestCustomerMessage.body),
               }
             : null,
-          conversationThreads: await redactThreadBodies(threads),
+          conversationThreads: await redactThreads(threads),
           customerHistory,
           // Operator-supplied instructions are the ONLY trusted instruction
           // channel. Kept in its own field (never concatenated with customer
@@ -734,7 +734,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           `/conversations/${input.conversationId}/threads`,
           { page: 1, size: input.limit },
         );
-        const threads = await redactThreadBodies(response._embedded?.threads ?? []);
+        const threads = await redactThreads(response._embedded?.threads ?? []);
         return textResult({
           conversationId: input.conversationId,
           threads,

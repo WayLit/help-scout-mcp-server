@@ -22,7 +22,7 @@ import {
   HelpScoutAPI,
   type PaginatedResponse,
 } from "./helpscout-api";
-import { redactThreadBodies } from "./redaction";
+import { redactThreads } from "./redaction";
 
 interface Inbox {
   id: number;
@@ -162,7 +162,7 @@ export function registerResources(server: McpServer, api: HelpScoutAPI): void {
       `/conversations/${conversationId}/threads`,
       { page, size },
     );
-    const threads = await redactThreadBodies(response._embedded?.threads ?? []);
+    const threads = await redactThreads(response._embedded?.threads ?? []);
     return jsonResource(uri.href, {
       conversationId,
       threads,
