@@ -62,7 +62,11 @@ sorted, `limit` 50), so an unfiltered structural scan is no longer reachable.
   instead of a page number, because one page number cannot describe several
   independently-paginated statuses. Pass it back unchanged; a plain page number
   still works and still means "page N of every status". Single-status searches
-  are unaffected and keep returning Help Scout's own page URL.
+  are unaffected and keep returning Help Scout's own page URL. The cursor is
+  tied to the search that issued it: replaying it with a different `limit`, or
+  against a different set of statuses, is rejected as `INVALID_INPUT` rather
+  than resuming at the wrong row or silently mixing a resumed status with a
+  restarted one.
 
 ### Fixed
 

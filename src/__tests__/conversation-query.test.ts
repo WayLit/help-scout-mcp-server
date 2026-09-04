@@ -181,13 +181,16 @@ describe("resolveStatusPlan", () => {
 });
 
 describe("merged status cursor", () => {
-  it("round-trips a position per status", () => {
-    const positions = { active: { page: 1, skip: 40 }, pending: { page: 2, skip: 0 } };
-    expect(parseMergedCursor(encodeMergedCursor(positions))).toEqual(positions);
+  it("round-trips a position per status, and the size they were measured against", () => {
+    const cursor = {
+      size: 50,
+      positions: { active: { page: 1, skip: 40 }, pending: { page: 2, skip: 0 } },
+    };
+    expect(parseMergedCursor(encodeMergedCursor(cursor))).toEqual(cursor);
   });
 
   it("emits an opaque token, not a readable page number", () => {
-    const cursor = encodeMergedCursor({ active: { page: 3, skip: 7 } });
+    const cursor = encodeMergedCursor({ size: 50, positions: { active: { page: 3, skip: 7 } } });
     expect(isMergedCursor(cursor)).toBe(true);
     expect(cursor).not.toContain("active");
     expect(Number(cursor)).toBeNaN();
@@ -195,8 +198,8 @@ describe("merged status cursor", () => {
 
   it("stays inside the base64url alphabet so it survives a query string", () => {
     const cursor = encodeMergedCursor({
-      active: { page: 1, skip: 1 },
-      pending: { page: 1, skip: 2 },
+      size: 50,
+      positions: { active: { page: 1, skip: 1 }, pending: { page: 1, skip: 2 } },
     });
     expect(cursor.slice(MERGED_CURSOR_PREFIX.length)).toMatch(/^[A-Za-z0-9_-]+$/);
   });
@@ -211,7 +214,7 @@ describe("merged status cursor", () => {
   });
 
   it("rejects a version it does not know", () => {
-    const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 99, pos: {} }))}`;
+    const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 99, size: 50, pos: {} }))}`;
     expect(parseMergedCursor(forged)).toBeUndefined();
   });
 
@@ -223,14 +226,23 @@ describe("merged status cursor", () => {
       { active: [1] },
       { active: "1,0" },
     ]) {
-      const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 1, pos }))}`;
+      const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 1, size: 50, pos }))}`;
       expect(parseMergedCursor(forged), JSON.stringify(pos)).toBeUndefined();
     }
   });
 
   it("rejects a cursor carrying no positions at all", () => {
-    const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 1, pos: {} }))}`;
+    const forged = `${MERGED_CURSOR_PREFIX}${btoa(JSON.stringify({ v: 1, size: 50, pos: {} }))}`;
     expect(parseMergedCursor(forged)).toBeUndefined();
+  });
+
+  it("rejects a cursor whose size is missing or not a usable page size", () => {
+    for (const size of [undefined, 0, -1, 1.5, "50", null]) {
+      const forged = `${MERGED_CURSOR_PREFIX}${btoa(
+        JSON.stringify({ v: 1, size, pos: { active: [1, 0] } }),
+      )}`;
+      expect(parseMergedCursor(forged), JSON.stringify({ size })).toBeUndefined();
+    }
   });
 
   it("returns undefined for anything without the prefix", () => {

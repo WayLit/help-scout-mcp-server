@@ -31,6 +31,7 @@ import {
   redactThreadBodies,
 } from "./redaction";
 import {
+  type MergedCursor,
   type StatusPosition,
   type StatusPositions,
   buildConversationQuery,
@@ -193,18 +194,18 @@ function formatInboxScope(inboxId?: string): string {
 function resolveCursor(cursor: string | undefined): {
   page?: number;
   url?: string;
-  positions?: StatusPositions;
+  merged?: MergedCursor;
 } {
   if (!cursor) return {};
   if (isMergedCursor(cursor)) {
-    const positions = parseMergedCursor(cursor);
-    if (!positions) {
+    const merged = parseMergedCursor(cursor);
+    if (!merged) {
       throw new HelpScoutApiError(
         "INVALID_INPUT",
         `Invalid cursor: "${cursor}". A merged multi-status cursor is opaque — pass the previous response's nextCursor back unchanged.`,
       );
     }
-    return { positions };
+    return { merged };
   }
   if (/^https?:\/\//.test(cursor)) {
     // The resolved URL is fetched with the caller's Help Scout OAuth token
@@ -393,7 +394,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
         const {
           page: cursorPage,
           url: cursorUrl,
-          positions: cursorPositions,
+          merged: cursorMerged,
         } = resolveCursor(input.cursor);
         // A lookup by unique identifier is not a "what's open right now" browse,
         // so the closed-excluded default doesn't apply to it: a bare
@@ -409,11 +410,37 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
             "A page-URL cursor requires a single `status` — a multi-status search merges independently-paginated requests and can't resume from a single URL. Pass a plain page number instead, or set one `status`.",
           );
         }
-        if (cursorPositions && plan.mode === "single") {
+        if (cursorMerged && plan.mode === "single") {
           throw new HelpScoutApiError(
             "INVALID_INPUT",
             "A merged multi-status cursor can't resume a single-status search — it carries a position per status. Keep the `status` you paged with, or drop the cursor to start over.",
           );
+        }
+        if (cursorMerged && plan.mode === "multi") {
+          // A position is a page plus an offset into it, so it means nothing
+          // apart from the page size that produced it: replaying page 2 of 10
+          // as page 2 of 50 would resume at row 51 and lose rows 11-50.
+          if (cursorMerged.size !== input.limit) {
+            throw new HelpScoutApiError(
+              "INVALID_INPUT",
+              `This cursor was issued for limit ${cursorMerged.size}, but limit ${input.limit} was passed. A merged cursor records a page and an offset into it, so a different limit would resume at the wrong row and skip everything in between. Keep limit ${cursorMerged.size} while paging, or drop the cursor to start over at the new limit.`,
+            );
+          }
+          // Each status carries its own position, so the cursor only describes
+          // the search that minted it. Resuming it against a different status
+          // set would restart the added statuses from page 1 and drop the
+          // removed ones — a hybrid page belonging to neither search.
+          const cursorStatuses = Object.keys(cursorMerged.positions).sort();
+          const planStatuses = [...plan.statuses].sort();
+          if (
+            cursorStatuses.length !== planStatuses.length ||
+            cursorStatuses.some((s, i) => s !== planStatuses[i])
+          ) {
+            throw new HelpScoutApiError(
+              "INVALID_INPUT",
+              `This cursor was issued for status [${cursorStatuses.join(", ")}], but this search covers [${planStatuses.join(", ")}]. A merged cursor holds one resume position per status, so it can only continue the status set it came from. Pass that same status set, or drop the cursor to start over.`,
+            );
+          }
         }
 
         const baseParams: Record<string, unknown> = {
@@ -469,7 +496,7 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
           // resume point. A plain page-number cursor predates the merged form
           // and keeps its old meaning: page N of every status.
           const startAt = (status: string): StatusPosition =>
-            cursorPositions?.[status] ?? { page: cursorPage ?? 1, skip: 0 };
+            cursorMerged?.positions[status] ?? { page: cursorPage ?? 1, skip: 0 };
 
           const results = await Promise.allSettled(
             statuses.map((status) =>
@@ -604,7 +631,9 @@ export function registerTools(server: McpServer, api: HelpScoutAPI): void {
                 ? `[WARNING] ${failed.length} status(es) failed. Results incomplete.`
                 : `Merged results from ${Object.keys(totalByStatus).length} statuses. Returned ${conversations.length} of ${totalAvailable}.`,
           };
-          if (anyRemaining) nextCursor = encodeMergedCursor(nextPositions);
+          if (anyRemaining) {
+            nextCursor = encodeMergedCursor({ size: input.limit, positions: nextPositions });
+          }
         }
 
         // Client-side createdBefore filter — must rebuild pagination so
