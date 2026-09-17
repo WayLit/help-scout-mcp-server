@@ -284,12 +284,8 @@ describe("redactOrganizationFields", () => {
   });
 });
 
-// Regression tests for #77. `openredaction@1.1.5` drops every EMAIL detection
-// that falls within ~60 characters either side of a line-leading run of two or
-// more ASCII hyphens, and reports no error — `detect()` returns `matches: []`
-// and echoes the body back. The trigger is the standard RFC 3676 signature
-// delimiter and Gmail's forwarded-message separator, so it fires on ordinary
-// support email. See `verifyNoEmailSurvivors` in ../redaction.
+// Regression tests for #77: openredaction misses emails near signature and
+// forwarded-message delimiters without reporting an error.
 describe("redactText — signature/forward block guard (#77)", () => {
   beforeEach(() => configureRedaction({}));
 
@@ -323,11 +319,8 @@ describe("redactText — signature/forward block guard (#77)", () => {
   });
 
   it("falls back to a constant token when the detector will not tokenize a survivor", async () => {
-    // The detector deliberately ignores addresses containing placeholder words
-    // (example / test / foo / bar), so an isolated re-detect returns them raw
-    // and there is no deterministic token to borrow. Over-redacting to the
-    // module's constant keeps the guard fail-closed without failing the call —
-    // a real ticket that mentions support@test-vendor.com must still return.
+    // Placeholder addresses may not get deterministic tokens. Fall back to the
+    // constant token so the guard remains fail-closed.
     const out = await redactText("Ask foo@example.com\n--\nSent from my phone");
     expect(out).not.toContain("foo@example.com");
     expect(out).toContain("[EMAIL_REDACTED]");

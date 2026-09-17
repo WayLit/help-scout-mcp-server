@@ -284,20 +284,8 @@ export interface Conversation {
   customer: { id: number; firstName: string; lastName: string; email: string };
   mailbox: { id: number; name: string };
   /**
-   * What the live Mailbox API actually sends for the inbox and the customer.
-   *
-   * The documented conversation payload carries a top-level `mailboxId`
-   * number and a `primaryCustomer` object of `{id, type, first, last,
-   * email}` — not the `mailbox`/`customer` objects modelled above, which the
-   * API never returns on a conversation. Both spellings are kept because the
-   * wrong pair is load-bearing elsewhere (every fixture hand-writes
-   * `customer`), so correcting the model outright is its own change against a
-   * live payload. `redactConversationCustomers` reads both spellings — it used
-   * to key on `customer` alone, which left it inert against live responses.
-   *
-   * Modelling both lets MERGE_SORT_VALUES in ./tools read whichever a payload
-   * supplies, the same way it already handles `customerWaitingSince` vs
-   * `waitingSince` below.
+   * Live responses use `mailboxId` and `primaryCustomer`; legacy fixtures use
+   * `mailbox` and `customer`. Keep both until the model and fixtures migrate.
    */
   mailboxId?: number;
   primaryCustomer?: {
