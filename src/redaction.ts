@@ -43,6 +43,9 @@ function getRedactor(): OpenRedaction {
       patterns: (gdprPreset.patterns ?? []).filter((type) => type !== "NAME"),
       // Customer-supplied terms that should never be redacted. Add internal
       // product names / domains here if any leak through.
+      //
+      // The survivor guard ignores this list and favors over-redaction. Add
+      // email exceptions to the guard as well.
       whitelist: [],
     });
   }
@@ -66,18 +69,47 @@ export function isRedactionEnabled(): boolean {
 }
 
 /**
- * Redact a single string. No-op if redaction is disabled or input is empty.
- * Fails closed: if the underlying detector throws, this throws too rather
- * than returning unredacted text — callers (tool handlers) already catch
- * and turn errors into an error response, which is preferable to leaking
- * raw customer PII to the client.
+ * Conservative matcher for emails that survive detection. It need not cover
+ * all of RFC 5322; generated placeholders contain no `@` and cannot match.
+ */
+const EMAIL_SURVIVOR = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+
+/**
+ * Tokenize emails the detector leaves behind.
+ *
+ * openredaction 1.1.5 silently misses emails near signature and forwarded-
+ * message delimiters. Re-detecting each survivor alone preserves deterministic
+ * tokens. Addresses the detector intentionally ignores use a constant token.
+ */
+async function tokenizeEmailSurvivors(redacted: string): Promise<string> {
+  const survivors = [...new Set(redacted.match(EMAIL_SURVIVOR) ?? [])];
+  if (survivors.length === 0) return redacted;
+  let out = redacted;
+  let fallbacks = 0;
+  // Replace longest first so suffix addresses do not corrupt longer ones.
+  for (const address of survivors.sort((a, b) => b.length - a.length)) {
+    const detected = (await getRedactor().detect(address)).redacted;
+    const token = detected.includes(address) ? "[EMAIL_REDACTED]" : detected;
+    if (token === "[EMAIL_REDACTED]") fallbacks++;
+    out = out.split(address).join(token);
+  }
+  logger.warn("redaction guard tokenized addresses the detector missed", {
+    count: survivors.length,
+    fallbacks,
+  });
+  return out;
+}
+
+/**
+ * Redact a string. No-op when disabled or empty. Detector errors propagate to
+ * prevent PII leaks; a final scan catches silently missed emails (#77).
  */
 export async function redactText(input: string | undefined | null): Promise<string> {
   if (!enabled) return input ?? "";
   if (!input) return "";
   try {
     const result = await getRedactor().detect(input);
-    return result.redacted;
+    return await tokenizeEmailSurvivors(result.redacted);
   } catch (err) {
     logger.error("redaction failed, refusing to return unredacted text", {
       error: err instanceof Error ? err.message : String(err),
@@ -172,20 +204,25 @@ export async function redactCustomerFields<T extends object>(customer: T): Promi
 }
 
 /**
- * Redact the embedded `customer` field on each conversation-shaped record so
- * list/search results don't leak names/emails into LLM context or logs. Returns
- * a new array; records without a customer object pass through untouched.
+ * Redact `primaryCustomer` from live API responses and the legacy `customer`
+ * field. Records without either field pass through unchanged.
  */
-export async function redactConversationCustomers<T extends { customer?: unknown }>(
-  items: T[],
-): Promise<T[]> {
+export async function redactConversationCustomers<
+  T extends { customer?: unknown; primaryCustomer?: unknown },
+>(items: T[]): Promise<T[]> {
   if (!enabled) return items;
   return Promise.all(
-    items.map(async (item) =>
-      item && typeof item.customer === "object" && item.customer
-        ? { ...item, customer: await redactCustomerFields(item.customer as object) }
-        : item,
-    ),
+    items.map(async (item) => {
+      if (!item) return item;
+      let out = item;
+      for (const field of ["customer", "primaryCustomer"] as const) {
+        const person = (out as Record<string, unknown>)[field];
+        if (person && typeof person === "object") {
+          out = { ...out, [field]: await redactCustomerFields(person as object) };
+        }
+      }
+      return out;
+    }),
   );
 }
 
@@ -206,7 +243,12 @@ export async function redactCustomerList<T extends object>(customers: T[]): Prom
  * must be redacted here rather than relying on it being dropped.
  */
 export async function redactConversationList<
-  T extends { subject?: string; preview?: string; customer?: unknown },
+  T extends {
+    subject?: string;
+    preview?: string;
+    customer?: unknown;
+    primaryCustomer?: unknown;
+  },
 >(items: T[]): Promise<T[]> {
   if (!enabled) return items;
   const withCustomer = await redactConversationCustomers(items);
