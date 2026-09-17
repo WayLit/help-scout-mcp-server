@@ -38,20 +38,20 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "agents": "^0.22.0",
+    "agents": "^0.23.0",
     "hono": "^4.13.7",
     "jose": "^6.2.12",
     "openredaction": "^1.1.5",
-    "zod": "^4.6.2"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260911.1",
-    "oxfmt": "^0.67.0",
-    "oxlint": "^1.82.0",
+    "@cloudflare/workers-types": "^5.20260914.1",
+    "oxfmt": "^0.68.0",
+    "oxlint": "^1.83.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
-    "vitest": "^4.1.11",
-    "wrangler": "^4.131.0"
+    "vitest": "^5.0.0",
+    "wrangler": "^4.131.2"
   },
   "engines": {
     "node": ">=24.21.0"
