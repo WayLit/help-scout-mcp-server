@@ -5,6 +5,7 @@ import {
   configureRedaction,
   isRedactionEnabled,
   redactAddressFields,
+  redactConversationCustomers,
   redactConversationList,
   redactCustomerFields,
   redactOrganizationFields,
@@ -280,5 +281,90 @@ describe("redactOrganizationFields", () => {
     const out = await redactOrganizationFields({ phones: ["+1 555-0100"], note: "jane@acme.com" });
     expect(out.phones).toEqual(["+1 555-0100"]);
     expect(out.note).toBe("jane@acme.com");
+  });
+});
+
+// Regression tests for #77. `openredaction@1.1.5` drops every EMAIL detection
+// that falls within ~60 characters either side of a line-leading run of two or
+// more ASCII hyphens, and reports no error — `detect()` returns `matches: []`
+// and echoes the body back. The trigger is the standard RFC 3676 signature
+// delimiter and Gmail's forwarded-message separator, so it fires on ordinary
+// support email. See `verifyNoEmailSurvivors` in ../redaction.
+describe("redactText — signature/forward block guard (#77)", () => {
+  beforeEach(() => configureRedaction({}));
+
+  it("redacts an address sitting next to a signature delimiter", async () => {
+    const out = await redactText("Reach me at jane@acme.com\n--\nSent from my phone");
+    expect(out).not.toContain("jane@acme.com");
+  });
+
+  it("redacts addresses sitting next to a forwarded-message separator", async () => {
+    const out = await redactText(
+      "jane@acme.com\n---------- Forwarded message ---------\nFrom: zoe@acme.com",
+    );
+    expect(out).not.toContain("jane@acme.com");
+    expect(out).not.toContain("zoe@acme.com");
+  });
+
+  it("redacts an address on the same line as a leading delimiter", async () => {
+    expect(await redactText("-- jane@acme.com")).not.toContain("jane@acme.com");
+  });
+
+  it("gives a rescued address the same deterministic token it gets in clean prose", async () => {
+    const clean = await redactText("Reach me at jane@acme.com tomorrow");
+    const token = clean.match(/\[EMAIL_\d+\]/)?.[0];
+    expect(token).toBeDefined();
+    expect(await redactText("jane@acme.com\n--\nSent from my phone")).toContain(token!);
+  });
+
+  it("leaves a body with no surviving address untouched by the guard", async () => {
+    const out = await redactText("No addresses here\n--\nSent from my phone");
+    expect(out).toBe("No addresses here\n--\nSent from my phone");
+  });
+
+  it("falls back to a constant token when the detector will not tokenize a survivor", async () => {
+    // The detector deliberately ignores addresses containing placeholder words
+    // (example / test / foo / bar), so an isolated re-detect returns them raw
+    // and there is no deterministic token to borrow. Over-redacting to the
+    // module's constant keeps the guard fail-closed without failing the call —
+    // a real ticket that mentions support@test-vendor.com must still return.
+    const out = await redactText("Ask foo@example.com\n--\nSent from my phone");
+    expect(out).not.toContain("foo@example.com");
+    expect(out).toContain("[EMAIL_REDACTED]");
+  });
+
+  it("does not throw on a body mixing tokenizable and placeholder addresses", async () => {
+    const out = await redactText("jane@acme.com and foo@example.com\n--\nregards");
+    expect(out).not.toContain("jane@acme.com");
+    expect(out).not.toContain("foo@example.com");
+    expect(out).toMatch(/\[EMAIL_\d+\]/);
+    expect(out).toContain("[EMAIL_REDACTED]");
+  });
+});
+
+describe("redactConversationCustomers — primaryCustomer (#77)", () => {
+  beforeEach(() => configureRedaction({}));
+
+  it("redacts primaryCustomer.email, the field the live API actually sends", async () => {
+    const [out] = await redactConversationCustomers([
+      { id: 1, primaryCustomer: { id: 9, email: "jane@acme.com", firstName: "Jane" } },
+    ]);
+    expect((out.primaryCustomer as { email: string }).email).toBe("[EMAIL_REDACTED]");
+    expect((out.primaryCustomer as { firstName: string }).firstName).toBe("Jane");
+  });
+
+  it("redacts both primaryCustomer and a legacy customer object on the same record", async () => {
+    const [out] = await redactConversationCustomers([
+      { primaryCustomer: { email: "jane@acme.com" }, customer: { email: "zoe@acme.com" } },
+    ]);
+    expect(JSON.stringify(out)).not.toContain("jane@acme.com");
+    expect(JSON.stringify(out)).not.toContain("zoe@acme.com");
+  });
+
+  it("redacts primaryCustomer through redactConversationList", async () => {
+    const [out] = await redactConversationList([
+      { subject: "Help", primaryCustomer: { email: "jane@acme.com" } },
+    ]);
+    expect(JSON.stringify(out)).not.toContain("jane@acme.com");
   });
 });

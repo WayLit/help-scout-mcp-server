@@ -290,9 +290,10 @@ export interface Conversation {
    * number and a `primaryCustomer` object of `{id, type, first, last,
    * email}` — not the `mailbox`/`customer` objects modelled above, which the
    * API never returns on a conversation. Both spellings are kept because the
-   * wrong pair is load-bearing elsewhere (`redactConversationCustomers` keys
-   * on `customer`, and every fixture hand-writes it), so correcting the model
-   * outright is its own change against a live payload.
+   * wrong pair is load-bearing elsewhere (every fixture hand-writes
+   * `customer`), so correcting the model outright is its own change against a
+   * live payload. `redactConversationCustomers` reads both spellings — it used
+   * to key on `customer` alone, which left it inert against live responses.
    *
    * Modelling both lets MERGE_SORT_VALUES in ./tools read whichever a payload
    * supplies, the same way it already handles `customerWaitingSince` vs
