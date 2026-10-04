@@ -10,7 +10,6 @@
  *     us; the real identity comes from the Access JWT verified inside
  *     /authorize.
  */
-import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -21,6 +20,7 @@ import { HelpScoutAPI } from "./helpscout-api";
 import { HelpScoutDocsAPI } from "./helpscout-docs-api";
 import { buildDocsInstructions, buildInstructions } from "./instructions";
 import { logger } from "./logger";
+import { createOAuthRouter } from "./oauth";
 import { registerPrompts } from "./prompts";
 import { configureRedaction } from "./redaction";
 import { registerResources } from "./resources";
@@ -360,7 +360,7 @@ const docsServeHandler = HelpScoutDocsMCP.serve("/docs/mcp", { binding: "DOCS_MC
 /**
  * Wraps McpAgent.serve() to stamp the OAuth-verified caller identity into a
  * trusted request header before the SDK routes to the session DO. The
- * OAuthProvider has already verified the bearer token and exposes the decrypted
+ * OAuth resource server has already verified the bearer token and exposes the decrypted
  * identity on `ctx.props`; we forward `ctx.props.email` (overwriting any
  * client-supplied copy of the header) so `<Agent>.fetch` can reject a
  * session id presented under a different identity than the one it was bound to.
@@ -385,39 +385,19 @@ function withVerifiedEmailHeader(serveHandler: {
   };
 }
 
-/**
- * Built on first request: 1.x binds every token to `resourceMetadata.resource`
- * at construction, and the deploy origin lives in `env`, not module scope.
- * A bare origin covers both `/mcp` and `/docs/mcp`.
- */
-let provider: OAuthProvider<Env> | undefined;
-
-function getProvider(env: Env): OAuthProvider<Env> {
-  if (!env.OAUTH_RESOURCE) {
-    throw new Error("OAUTH_RESOURCE is not set (e.g. https://helpscout-mcp.example.com)");
-  }
-  provider ??= new OAuthProvider<Env>({
-    apiHandlers: {
-      // McpAgent.serve() returns a fetch handler suitable for apiHandlers.
-      // Cast is needed because the OAuthProvider generic signature expects
-      // an ExportedHandler-like type but accepts Worker entrypoints.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      "/mcp": withVerifiedEmailHeader(mailboxServeHandler) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      "/docs/mcp": withVerifiedEmailHeader(docsServeHandler) as any,
-    },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    defaultHandler: AuthHandler as any,
-    authorizeEndpoint: "/authorize",
-    tokenEndpoint: "/token",
-    clientRegistrationEndpoint: "/register",
-    resourceMetadata: { resource: env.OAUTH_RESOURCE },
-  });
-  return provider;
-}
+/** Built on first request, because the public origin lives in `env`. */
+let router: ReturnType<typeof createOAuthRouter> | undefined;
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return getProvider(env).fetch(request, env, ctx);
+    if (!env.OAUTH_ISSUER) {
+      throw new Error("OAUTH_ISSUER is not set (e.g. https://helpscout-mcp.example.com)");
+    }
+    router ??= createOAuthRouter(env.OAUTH_ISSUER, {
+      mailbox: withVerifiedEmailHeader(mailboxServeHandler),
+      docs: withVerifiedEmailHeader(docsServeHandler),
+      app: AuthHandler,
+    });
+    return router.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;

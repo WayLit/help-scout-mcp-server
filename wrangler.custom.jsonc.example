@@ -37,7 +37,8 @@
   ],
   "vars": {
     "OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai",
-    // Origin MCP clients connect to; the token audience for /mcp and /docs/mcp.
-    "OAUTH_RESOURCE": "https://helpscout-mcp.example.com"
+    // Public origin MCP clients connect to: the OAuth issuer, with /mcp and
+    // /docs/mcp as the token audiences.
+    "OAUTH_ISSUER": "https://helpscout-mcp.example.com"
   }
 }

@@ -31,11 +31,11 @@ export interface Env {
   OAUTH_ALLOWED_REDIRECT_HOSTS?: string;
 
   /**
-   * Canonical OAuth resource: the origin MCP clients connect to, e.g.
-   * "https://helpscout-mcp.example.com". Becomes every token's audience;
-   * changing it after deploy invalidates issued tokens.
+   * Public origin MCP clients connect to, e.g. "https://helpscout-mcp.example.com".
+   * The OAuth issuer; `<origin>/mcp` and `<origin>/docs/mcp` are the token
+   * audiences, so changing it after deploy invalidates issued tokens.
    */
-  OAUTH_RESOURCE: string;
+  OAUTH_ISSUER: string;
 
   /** Logger verbosity: error | warn | info | debug */
   LOG_LEVEL?: string;

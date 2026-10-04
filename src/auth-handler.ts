@@ -14,6 +14,7 @@
  * authenticated requests with a JWT in `Cf-Access-Jwt-Assertion`.
  */
 import { Hono } from "hono";
+import { AuthorizationError } from "@cloudflare/workers-oauth-provider";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 
 import { HELPSCOUT_DOCS_API_BASE } from "./helpscout-docs-api";
@@ -168,7 +169,7 @@ async function userHasValidTokens(env: Env, email: string): Promise<boolean> {
  * mailbox MCP. MCP clients send `resource` (RFC 8707) set to the canonical
  * URL of the server they're connecting to, e.g. `https://host/docs/mcp` —
  * that's the only signal available at `/authorize` time to tell the two
- * connectors apart, since both share one OAuthProvider instance.
+ * connectors apart, since both share one authorization server.
  */
 export function isDocsResource(resource: string | string[] | undefined): boolean {
   const values = Array.isArray(resource) ? resource : resource ? [resource] : [];
@@ -275,7 +276,26 @@ app.get("/healthz", (c) =>
 app.get("/authorize", async (c) => {
   logger.setLevel(c.env.LOG_LEVEL);
   const requestId = newRequestId();
-  const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+  let oauthReqInfo: AuthRequest;
+  try {
+    oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+  } catch (err) {
+    if (!(err instanceof AuthorizationError)) throw err;
+    logger.warn("authorize: request rejected", {
+      requestId,
+      code: err.code,
+      reason: err.description,
+    });
+    // redirectTo is set only once the client's redirect_uri is validated; it
+    // still has to clear our own allowlist before we send the browser there.
+    if (
+      err.redirectTo &&
+      isAllowedRedirectUri(err.redirectUri, c.env.OAUTH_ALLOWED_REDIRECT_HOSTS)
+    ) {
+      return c.redirect(err.redirectTo);
+    }
+    return c.text(`Invalid authorization request: ${err.description}`, 400);
+  }
   if (!oauthReqInfo.clientId) {
     logger.warn("authorize: missing clientId", { requestId });
     return c.text("Invalid authorization request", 400);
