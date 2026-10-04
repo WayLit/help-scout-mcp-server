@@ -81,15 +81,19 @@ describe("OAuth router", () => {
     seenResource = undefined;
   });
 
-  /** Register a client, authorize for `resource`, and exchange the code for an access token. */
-  async function authorize(resource: string | undefined): Promise<string> {
+  async function register(): Promise<string> {
     const reg = await call("/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ redirect_uris: [REDIRECT_URI], token_endpoint_auth_method: "none" }),
     });
     expect(reg.status).toBe(201);
-    const { client_id } = (await reg.json()) as { client_id: string };
+    return ((await reg.json()) as { client_id: string }).client_id;
+  }
+
+  /** Register a client, authorize for `resource`, and exchange the code for an access token. */
+  async function authorize(resource: string | undefined): Promise<string> {
+    const client_id = await register();
 
     const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)).buffer);
     const challenge = base64url(
@@ -162,6 +166,22 @@ describe("OAuth router", () => {
     const token = await authorize(undefined);
     expect(seenResource).toBe(`${ISSUER}/mcp`);
     expect((await call("/mcp", bearer(token))).status).toBe(200);
+  });
+
+  it("rejects an authorization naming both resources", async () => {
+    const client_id = await register();
+    const query = new URLSearchParams({
+      response_type: "code",
+      client_id,
+      redirect_uri: REDIRECT_URI,
+      code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      code_challenge_method: "S256",
+      state: "s",
+    });
+    query.append("resource", `${ISSUER}/mcp`);
+    query.append("resource", `${ISSUER}/docs/mcp`);
+    await expect(call(`/authorize?${query}`)).rejects.toMatchObject({ code: "invalid_target" });
+    expect(seenResource).toBeUndefined();
   });
 
   it("hands paths the authorization server doesn't own to the app", async () => {
