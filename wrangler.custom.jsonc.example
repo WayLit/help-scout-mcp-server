@@ -36,6 +36,8 @@
     { "pattern": "helpscout-mcp.example.com", "custom_domain": true }
   ],
   "vars": {
-    "OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai"
+    "OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai",
+    // Origin MCP clients connect to; the token audience for /mcp and /docs/mcp.
+    "OAUTH_RESOURCE": "https://helpscout-mcp.example.com"
   }
 }

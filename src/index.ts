@@ -385,19 +385,39 @@ function withVerifiedEmailHeader(serveHandler: {
   };
 }
 
-export default new OAuthProvider({
-  apiHandlers: {
-    // McpAgent.serve() returns a fetch handler suitable for apiHandlers.
-    // Cast is needed because the OAuthProvider generic signature expects
-    // an ExportedHandler-like type but accepts Worker entrypoints.
+/**
+ * Built on first request: 1.x binds every token to `resourceMetadata.resource`
+ * at construction, and the deploy origin lives in `env`, not module scope.
+ * A bare origin covers both `/mcp` and `/docs/mcp`.
+ */
+let provider: OAuthProvider<Env> | undefined;
+
+function getProvider(env: Env): OAuthProvider<Env> {
+  if (!env.OAUTH_RESOURCE) {
+    throw new Error("OAUTH_RESOURCE is not set (e.g. https://helpscout-mcp.example.com)");
+  }
+  provider ??= new OAuthProvider<Env>({
+    apiHandlers: {
+      // McpAgent.serve() returns a fetch handler suitable for apiHandlers.
+      // Cast is needed because the OAuthProvider generic signature expects
+      // an ExportedHandler-like type but accepts Worker entrypoints.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      "/mcp": withVerifiedEmailHeader(mailboxServeHandler) as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      "/docs/mcp": withVerifiedEmailHeader(docsServeHandler) as any,
+    },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    "/mcp": withVerifiedEmailHeader(mailboxServeHandler) as any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    "/docs/mcp": withVerifiedEmailHeader(docsServeHandler) as any,
+    defaultHandler: AuthHandler as any,
+    authorizeEndpoint: "/authorize",
+    tokenEndpoint: "/token",
+    clientRegistrationEndpoint: "/register",
+    resourceMetadata: { resource: env.OAUTH_RESOURCE },
+  });
+  return provider;
+}
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return getProvider(env).fetch(request, env, ctx);
   },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  defaultHandler: AuthHandler as any,
-  authorizeEndpoint: "/authorize",
-  tokenEndpoint: "/token",
-  clientRegistrationEndpoint: "/register",
-});
+} satisfies ExportedHandler<Env>;

@@ -100,6 +100,10 @@ wrangler secret put OAUTH_ALLOWED_REDIRECT_HOSTS
 
 Left unset, the worker rejects every non-loopback redirect. That is the safe default: dynamic client registration is enabled, so a permissive list would let an attacker route an Access-authenticated user through `/authorize` to a callback they control.
 
+### 4b. Set the OAuth resource
+
+`OAUTH_RESOURCE` is the origin MCP clients connect to, e.g. `https://helpscout-mcp.<account>.workers.dev`. It becomes the audience of every issued token and covers both `/mcp` and `/docs/mcp`. Set it in the `vars` block of `wrangler.jsonc` (or `wrangler.custom.jsonc`). The worker refuses requests without it, and changing it after deploy forces clients to re-authorize.
+
 ### 5. Deploy
 
 By default the worker deploys to `helpscout-mcp.<account>.workers.dev`:
@@ -148,6 +152,7 @@ HELPSCOUT_APP_ID=...
 HELPSCOUT_APP_SECRET=...
 CF_ACCESS_TEAM_DOMAIN=...
 CF_ACCESS_AUD=...
+OAUTH_RESOURCE=http://localhost:8788
 ```
 
 Setting `BYPASS_ACCESS=true` in `.dev.vars` skips Access JWT verification locally — **never** set it in production. Outside `wrangler dev`, the runtime refuses to start with the flag on.

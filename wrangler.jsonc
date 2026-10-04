@@ -57,7 +57,10 @@
 		"node:module": "./src/polyfills/node-module.ts"
 	},
 	"vars": {
-		"OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai"
+		"OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai",
+		// Origin MCP clients connect to; the token audience for /mcp and /docs/mcp.
+		// Replace with your workers.dev origin before deploying.
+		"OAUTH_RESOURCE": "https://helpscout-mcp.example.workers.dev"
 	}
 	// No `routes` here — by default this worker deploys to `*.workers.dev`.
 	// To use a custom domain, copy `wrangler.custom.jsonc.example` →

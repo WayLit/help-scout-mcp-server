@@ -21,6 +21,9 @@ CF_ACCESS_AUD=
 # redirects, which is the safe default behind dynamic client registration.
 # OAUTH_ALLOWED_REDIRECT_HOSTS=claude.ai,*.claude.ai
 
+# Canonical OAuth resource (token audience). Overrides the wrangler.jsonc var.
+OAUTH_RESOURCE=http://localhost:8788
+
 # Local-dev escape hatch. Skips Access JWT verification when both are set.
 # REFUSED at startup outside `wrangler dev`.
 # BYPASS_ACCESS=true
