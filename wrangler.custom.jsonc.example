@@ -36,6 +36,9 @@
     { "pattern": "helpscout-mcp.example.com", "custom_domain": true }
   ],
   "vars": {
-    "OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai"
+    "OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai",
+    // Public origin MCP clients connect to: the OAuth issuer, with /mcp and
+    // /docs/mcp as the token audiences.
+    "OAUTH_ISSUER": "https://helpscout-mcp.example.com"
   }
 }

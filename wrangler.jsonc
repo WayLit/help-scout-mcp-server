@@ -58,6 +58,8 @@
 	},
 	"vars": {
 		"OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai"
+		// OAUTH_ISSUER is deliberately not defaulted: set it to this worker's
+		// public origin (see DEPLOYMENT.md step 5). Requests fail until it is.
 	}
 	// No `routes` here — by default this worker deploys to `*.workers.dev`.
 	// To use a custom domain, copy `wrangler.custom.jsonc.example` →

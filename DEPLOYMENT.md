@@ -70,7 +70,11 @@ wrangler secret put HELPSCOUT_APP_ID
 wrangler secret put HELPSCOUT_APP_SECRET
 wrangler secret put CF_ACCESS_TEAM_DOMAIN
 wrangler secret put CF_ACCESS_AUD
+wrangler secret put OAUTH_ISSUER
+# value: the public origin, e.g. https://helpscout-mcp.<account>.workers.dev
 ```
+
+`OAUTH_ISSUER` has no default: the worker refuses requests until it is set. With Option B below, put it in the `vars` block of `wrangler.custom.jsonc` instead.
 
 **Optional — only if you'll have browser-based MCP clients (claude.ai, etc.):**
 
