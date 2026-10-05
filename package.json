@@ -3,7 +3,7 @@
   "version": "3.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.6.0",
+  "packageManager": "pnpm@12.8.2",
   "description": "Remote MCP server for Help Scout, deployed as a Cloudflare Worker with per-user OAuth",
   "homepage": "https://github.com/WayLit/help-scout-mcp-server#readme",
   "bugs": {
@@ -45,13 +45,13 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261001.1",
+    "@cloudflare/workers-types": "^5.20261002.1",
     "oxfmt": "^0.71.0",
     "oxlint": "^1.86.0",
     "typescript": "^7.0.2",
-    "vite": "^8.3.1",
+    "vite": "^8.3.2",
     "vitest": "^5.0.3",
-    "wrangler": "^4.145.0"
+    "wrangler": "^4.146.0"
   },
   "engines": {
     "node": ">=24.21.0"
