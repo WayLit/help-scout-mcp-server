@@ -36,22 +36,22 @@
     "security:ci": "semgrep ci"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^1.2.1",
-    "@modelcontextprotocol/sdk": "^1.31.0",
-    "agents": "^0.24.0",
-    "hono": "^4.13.12",
+    "@cloudflare/workers-oauth-provider": "^1.2.3",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "agents": "^0.27.0",
+    "hono": "^4.13.13",
     "jose": "^6.2.12",
     "openredaction": "^1.1.5",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261002.1",
-    "oxfmt": "^0.71.0",
-    "oxlint": "^1.86.0",
+    "@cloudflare/workers-types": "^5.20261008.1",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
     "typescript": "^7.0.2",
-    "vite": "^8.3.2",
+    "vite": "^8.3.4",
     "vitest": "^5.0.3",
-    "wrangler": "^4.146.0"
+    "wrangler": "^4.148.0"
   },
   "engines": {
     "node": ">=24.21.0"
