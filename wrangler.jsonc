@@ -56,6 +56,10 @@
 	"alias": {
 		"node:module": "./src/polyfills/node-module.ts"
 	},
+	// Keep vars set in the dashboard (e.g. OAUTH_ISSUER) across deploys.
+	// Without this, every deploy — including Git autodeploys — deletes any
+	// var not listed below.
+	"keep_vars": true,
 	"vars": {
 		"OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai"
 		// OAUTH_ISSUER is deliberately not defaulted: set it to this worker's
