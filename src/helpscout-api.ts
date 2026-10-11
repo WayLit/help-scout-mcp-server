@@ -2,7 +2,7 @@
  * Help Scout API client used inside MCP session Durable Objects.
  *
  * Token state (access + refresh + single-flight refresh) lives in the *user*
- * DO (named by email — see `HelpScoutMCP.handleInternal` in `index.ts`), not
+ * DO (named by email — see `HelpScoutMCP.#handleInternal` in `index.ts`), not
  * here. Session DOs are named by transport session ID by `McpAgent.serve()`,
  * so the session storage we hold a reference to here is per-session and only
  * used for response caching. Token operations RPC into the email-named user

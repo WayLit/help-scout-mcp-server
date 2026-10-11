@@ -123,7 +123,7 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.hostname === "internal") {
-      return this.handleInternal(request, url);
+      return this.#handleInternal(request, url);
     }
 
     // Cross-identity guard. McpAgent binds this session DO to the first
@@ -152,7 +152,13 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
     return super.fetch(request);
   }
 
-  private async handleInternal(request: Request, url: URL): Promise<Response> {
+  // The internal helpers below must stay ES `#private`, not TS `private`.
+  // agents >=0.27 auto-wraps every async prototype method not prefixed `_`
+  // so that calling it first runs onStart() -> init(). The email-named user
+  // DO is never given props, so init() would throw on every internal call.
+  // `#` methods aren't on the prototype, so they're neither wrapped nor
+  // reachable via DO RPC.
+  async #handleInternal(request: Request, url: URL): Promise<Response> {
     if (url.pathname === "/store-tokens" && request.method === "POST") {
       const record = (await request.json()) as HelpScoutTokenRecord;
       if (!record?.accessToken || !record?.refreshToken || !record?.expiresAt) {
@@ -175,7 +181,7 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
 
     if (url.pathname === "/get-access-token" && request.method === "POST") {
       const body = (await request.json().catch(() => ({}))) as { forceRefresh?: boolean };
-      return this.handleGetAccessToken(Boolean(body?.forceRefresh));
+      return this.#handleGetAccessToken(Boolean(body?.forceRefresh));
     }
 
     if (url.pathname === "/store-docs-key" && request.method === "POST") {
@@ -219,7 +225,7 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
    *   401 { code: "REAUTH_REQUIRED" } — caller must surface re-auth to the user.
    *   502 { code: "UPSTREAM_ERROR", message } — transient HS failure; caller may retry.
    */
-  private async handleGetAccessToken(forceRefresh: boolean): Promise<Response> {
+  async #handleGetAccessToken(forceRefresh: boolean): Promise<Response> {
     const record = await this.ctx.storage.get<HelpScoutTokenRecord>(HS_TOKENS_STORAGE_KEY);
     if (!record) {
       return Response.json({ code: "REAUTH_REQUIRED" }, { status: 401 });
@@ -231,7 +237,7 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
     }
 
     if (!this.refreshPromise) {
-      this.refreshPromise = this.refreshHelpScoutToken(record.refreshToken).finally(() => {
+      this.refreshPromise = this.#refreshHelpScoutToken(record.refreshToken).finally(() => {
         this.refreshPromise = null;
       });
     }
@@ -253,7 +259,7 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
    * pair and persist it. On `invalid_grant` (revoked/expired refresh), wipe the
    * stored record and signal `REAUTH_REQUIRED` so the caller can drive consent.
    */
-  private async refreshHelpScoutToken(refreshToken: string): Promise<HelpScoutTokenRecord> {
+  async #refreshHelpScoutToken(refreshToken: string): Promise<HelpScoutTokenRecord> {
     const body = new URLSearchParams({
       refresh_token: refreshToken,
       client_id: this.env.HELPSCOUT_APP_ID,
