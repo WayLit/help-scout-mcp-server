@@ -7,7 +7,7 @@ minimumReleaseAgeExclude:
 overrides:
   '@hono/node-server@<2.0.6': '>=2.1.5'
   tmp@<=0.2.3: '>=0.2.7'
-  hono@<4.12.12: '>=4.13.13'
+  hono@<4.12.12: '>=4.13.14'
   undici@>=7.0.0 <7.29.0: ^7.30.1
   '@modelcontextprotocol/client@>=2.0.0 <2.2.0': ^2.4.0
   sharp@<0.35.5: ^0.35.5
