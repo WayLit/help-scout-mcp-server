@@ -61,7 +61,9 @@
 	// var not listed below.
 	"keep_vars": true,
 	"vars": {
-		"OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai"
+		// OAUTH_ALLOWED_REDIRECT_HOSTS is deliberately absent: it names this
+		// deployment's own hosts, so it is set per deployment (dashboard or
+		// `wrangler secret put`). Listing it here would reset it on every deploy.
 		// OAUTH_ISSUER is deliberately not defaulted: set it to this worker's
 		// public origin (see DEPLOYMENT.md step 5). Requests fail until it is.
 	}

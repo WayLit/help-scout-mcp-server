@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `OAUTH_ALLOWED_REDIRECT_HOSTS` is no longer set in `wrangler.jsonc` or
+  `wrangler.custom.jsonc.example`. As a committed var, every deploy reset it to
+  `claude.ai`, discarding hosts added in the dashboard, and it clashed with the
+  `wrangler secret put` setup the docs describe. Deployments that relied on the
+  committed `claude.ai` default must now set it themselves; without it, only
+  loopback redirects are accepted.
+
 ## [3.0.0] - 2026-08-25
 
 Consolidates the mailbox conversation-search surface: four overlapping search
