@@ -35,8 +35,9 @@
   "routes": [
     { "pattern": "helpscout-mcp.example.com", "custom_domain": true }
   ],
+  // OAUTH_ALLOWED_REDIRECT_HOSTS is not listed: set it with
+  // `wrangler secret put` so deploys don't reset it (see DEPLOYMENT.md step 5).
   "vars": {
-    "OAUTH_ALLOWED_REDIRECT_HOSTS": "claude.ai",
     // Public origin MCP clients connect to: the OAuth issuer, with /mcp and
     // /docs/mcp as the token audiences.
     "OAUTH_ISSUER": "https://helpscout-mcp.example.com"
