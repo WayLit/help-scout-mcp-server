@@ -1,9 +1,20 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { CreateArticleShape, UpdateArticleShape } from "../docs-schemas";
+import {
+  CreateArticleImageUploadShape,
+  CreateArticleShape,
+  DeleteArticleShape,
+  DeleteCollectionShape,
+  GetArticleShape,
+  GetCollectionShape,
+  UpdateArticleShape,
+  UpdateCollectionShape,
+} from "../docs-schemas";
 import { HelpScoutApiError } from "../helpscout-api";
 import { registerDocsTools } from "../docs-tools";
 
@@ -479,5 +490,61 @@ describe("createArticleImageUpload", () => {
     const result = await tools.createArticleImageUpload.handler({ articleId: "42" }, {});
     const payload = parseResult(result) as { usage: string };
     expect(payload.usage).toContain("one updateArticle");
+  });
+});
+
+describe("ids used in request paths", () => {
+  const PATH_SHAPES = {
+    getCollection: [GetCollectionShape, "collectionId"],
+    updateCollection: [UpdateCollectionShape, "collectionId"],
+    deleteCollection: [DeleteCollectionShape, "collectionId"],
+    getArticle: [GetArticleShape, "articleId"],
+    updateArticle: [UpdateArticleShape, "articleId"],
+    deleteArticle: [DeleteArticleShape, "articleId"],
+    createArticleImageUpload: [CreateArticleImageUploadShape, "articleId"],
+  } as const;
+
+  it("accepts ids and article numbers", () => {
+    for (const [name, [shape, field]] of Object.entries(PATH_SHAPES)) {
+      const schema = z.object(shape);
+      for (const ok of [RELATED_A, "42", "a1"]) {
+        expect(schema.safeParse({ [field]: ok }).success, `${name} ${ok}`).toBe(true);
+      }
+    }
+  });
+
+  it("rejects anything that could reshape the path", () => {
+    for (const [name, [shape, field]] of Object.entries(PATH_SHAPES)) {
+      const schema = z.object(shape);
+      for (const bad of [
+        "../collections/abc",
+        "x/../../v2",
+        "abc/def",
+        "abc?status=all",
+        "abc#x",
+        "abc%2F..",
+        "..",
+        "",
+      ]) {
+        expect(schema.safeParse({ [field]: bad }).success, `${name} ${bad}`).toBe(false);
+      }
+    }
+  });
+
+  it("refuses a path-traversal id before it reaches the API", async () => {
+    const { server, api } = setupServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const result = (await client
+      .callTool({ name: "deleteArticle", arguments: { articleId: "../collections/abc" } })
+      .catch((err: unknown) => ({ isError: true, thrown: err }))) as { isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(api.write).not.toHaveBeenCalled();
+
+    await client.callTool({ name: "deleteArticle", arguments: { articleId: RELATED_A } });
+    expect(api.write).toHaveBeenCalledWith("DELETE", `/articles/${RELATED_A}`);
+    await client.close();
   });
 });

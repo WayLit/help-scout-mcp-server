@@ -18,6 +18,17 @@ const ArticleObjectId = z
     "Must be a 24-character hex article id (article.id), not an article number (article.number).",
   );
 
+/**
+ * An article or collection id (or an article's number) that the tools paste
+ * into a request path such as `/articles/{id}`. Letters and digits only: a `/`,
+ * `?`, `#`, `%` or `.` would let the value reshape the path, and URL
+ * normalization resolves `..`, so `deleteArticle` with `../collections/X`
+ * would otherwise send `DELETE /v1/collections/X`.
+ */
+const PathId = z
+  .string()
+  .regex(/^[A-Za-z0-9]+$/, "Must be an id or number: letters and digits only.");
+
 const RELATED_IDS =
   "Internal 24-char hex ids of related articles — use article.id, not article.number.";
 
@@ -71,7 +82,7 @@ export const ListCollectionsShape = {
 };
 
 export const GetCollectionShape = {
-  collectionId: z.string(),
+  collectionId: PathId,
 };
 
 export const CreateCollectionShape = {
@@ -82,14 +93,14 @@ export const CreateCollectionShape = {
 };
 
 export const UpdateCollectionShape = {
-  collectionId: z.string(),
+  collectionId: PathId,
   name: z.string().optional(),
   description: z.string().optional(),
   visibility: z.enum(["public", "private"]).optional(),
 };
 
 export const DeleteCollectionShape = {
-  collectionId: z.string(),
+  collectionId: PathId,
 };
 
 export const ListArticlesShape = {
@@ -110,7 +121,7 @@ export const SearchArticlesShape = {
 };
 
 export const GetArticleShape = {
-  articleId: z.string(),
+  articleId: PathId,
   draft: z.boolean().default(false),
 };
 
@@ -126,7 +137,7 @@ export const CreateArticleShape = {
 };
 
 export const UpdateArticleShape = {
-  articleId: z.string(),
+  articleId: PathId,
   name: z.string().optional(),
   text: z.string().optional().describe("Article body, plain text or HTML."),
   slug: ArticleSlug.optional().describe(
@@ -146,11 +157,11 @@ export const UpdateArticleShape = {
 };
 
 export const DeleteArticleShape = {
-  articleId: z.string(),
+  articleId: PathId,
 };
 
 export const CreateArticleImageUploadShape = {
-  articleId: z.string().describe("The article the image will be attached to. Must already exist."),
+  articleId: PathId.describe("The article the image will be attached to. Must already exist."),
   fileName: z
     .string()
     .optional()
