@@ -209,7 +209,7 @@ importers:
         version: 4.6.7
     devDependencies:
       '@cloudflare/workers-types':
-        specifier: ^5.20261112.1
+        specifier: ^5.20261113.1
         version: 5.20261113.1
       oxfmt:
         specifier: ^0.78.0
