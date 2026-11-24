@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional error reporting to Sentry: set the `SENTRY_DSN` secret and
+  uncaught errors and unexpected tool errors are reported, with PII redacted
+  and no credentials or request content. Without it nothing is sent.
+
 ### Changed
 
 - `OAUTH_ALLOWED_REDIRECT_HOSTS` is no longer set in `wrangler.jsonc` or

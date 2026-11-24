@@ -37,6 +37,11 @@ export interface Env {
    */
   OAUTH_ISSUER: string;
 
+  /** Optional secret: a Sentry DSN. When set, errors are reported there (see src/sentry.ts). */
+  SENTRY_DSN?: string;
+  /** Optional: the Worker version, which Sentry uses as the release. */
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
+
   /** Logger verbosity: error | warn | info | debug */
   LOG_LEVEL?: string;
 
