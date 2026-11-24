@@ -4,6 +4,7 @@
  * tools: this connector is meant for fixing/authoring knowledge-base content,
  * not just searching it.
  */
+import { captureException } from "@sentry/cloudflare";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
@@ -65,6 +66,8 @@ function errorResult(error: unknown, toolName: string, email?: string): CallTool
       isError: true,
     };
   }
+  // The client gets the error as a tool result, so nothing else reports it.
+  captureException(error, { tags: { tool: toolName }, extra: { requestId } });
   logger.error("docs tool: unexpected error", {
     requestId,
     email,

@@ -10,6 +10,7 @@
  * deployment is per-user, so data never crosses users, and callers can pass
  * inboxId explicitly when they want to scope.
  */
+import { captureException } from "@sentry/cloudflare";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
@@ -113,6 +114,8 @@ function errorResult(
       isError: true,
     };
   }
+  // The client gets the error as a tool result, so nothing else reports it.
+  captureException(error, { tags: { tool: toolName }, extra: { requestId } });
   logger.error("tool: unexpected error", {
     requestId,
     email,

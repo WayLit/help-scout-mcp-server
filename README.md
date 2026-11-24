@@ -214,6 +214,16 @@ wrangler d1 execute helpscout-mcp-audit --command "
 
 Without the `AUDIT_DB` binding, audit logging is a silent no-op. `args_hash` is a SHA-256 of the JSON-stringified args, so the log stays forensically useful without storing user content.
 
+## Optional: error reporting (Sentry)
+
+Set a Sentry DSN as a secret and the worker reports errors there: uncaught errors in the worker and its Durable Objects, and unexpected tool errors (which clients only see as a tool result).
+
+```bash
+wrangler secret put SENTRY_DSN
+```
+
+Without it nothing is sent. Events carry no user, cookies, request bodies, query strings, MCP payloads or headers other than content type, user agent, accept and `cf-ray`, and error messages go through the PII redaction below. The release is the Worker version id. Details in `src/sentry.ts`.
+
 ## PII redaction
 
 **On by default.** The worker redacts conversation bodies, subjects, customer records, and contact details through [OpenRedaction](https://github.com/sam247/openredaction) (GDPR preset) before anything reaches the model. Set `REDACT_PII=false` to disable.

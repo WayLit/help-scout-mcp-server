@@ -10,6 +10,7 @@
  *     us; the real identity comes from the Access JWT verified inside
  *     /authorize.
  */
+import { instrumentAgentWithSentry, withSentry } from "@sentry/cloudflare";
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -23,6 +24,7 @@ import { logger } from "./logger";
 import { createOAuthRouter } from "./oauth";
 import { registerPrompts } from "./prompts";
 import { configureRedaction } from "./redaction";
+import { sentryOptions } from "./sentry";
 import { registerResources } from "./resources";
 import { registerTools } from "./tools";
 import type { Env, HelpScoutTokenRecord, Props } from "./types";
@@ -38,7 +40,7 @@ const HELPSCOUT_TOKEN_URL = "https://api.helpscout.net/v2/oauth2/token";
  */
 const VERIFIED_EMAIL_HEADER = "x-hs-verified-email";
 
-export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
+class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
   server = new McpServer({
     name: "helpscout-mcp",
     version: "2.0.0",
@@ -306,7 +308,7 @@ export class HelpScoutMCP extends McpAgent<Env, Record<string, never>, Props> {
  * OAuth tokens — DOCS_MCP_OBJECT below is only for this class's own McpAgent
  * session instances, not for secret storage.
  */
-export class HelpScoutDocsMCP extends McpAgent<Env, Record<string, never>, Props> {
+class HelpScoutDocsMCP extends McpAgent<Env, Record<string, never>, Props> {
   server = new McpServer({
     name: "helpscout-docs-mcp",
     version: "1.0.0",
@@ -394,7 +396,18 @@ function withVerifiedEmailHeader(serveHandler: {
 /** Built on first request, because the public origin lives in `env`. */
 let router: ReturnType<typeof createOAuthRouter> | undefined;
 
-export default {
+/**
+ * The Durable Object classes, under the names wrangler.jsonc binds, wrapped so
+ * their errors reach Sentry when SENTRY_DSN is set (see src/sentry.ts).
+ */
+const InstrumentedHelpScoutMCP = instrumentAgentWithSentry(sentryOptions, HelpScoutMCP);
+const InstrumentedHelpScoutDocsMCP = instrumentAgentWithSentry(sentryOptions, HelpScoutDocsMCP);
+export {
+  InstrumentedHelpScoutMCP as HelpScoutMCP,
+  InstrumentedHelpScoutDocsMCP as HelpScoutDocsMCP,
+};
+
+export default withSentry(sentryOptions, {
   fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (!env.OAUTH_ISSUER) {
       throw new Error("OAUTH_ISSUER is not set (e.g. https://helpscout-mcp.example.com)");
@@ -406,4 +419,4 @@ export default {
     });
     return router.fetch(request, env, ctx);
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env>);
